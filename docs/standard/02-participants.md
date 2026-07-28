@@ -77,7 +77,7 @@ flowchart LR
     BROKER([broker])
 
     R -. vendor protocol .- FM
-    FM -- "publishes on<br/>/ISO_21423/v1/IMR/&lt;robot-uuid&gt;/*" --> BROKER
+    FM -- "publishes on<br/>/ISO_21423/v1/IMR/{robot-uuid}/*" --> BROKER
     BROKER -- "requests arrive on the<br/>IMRFM's request topic" --> FM
 ```
 

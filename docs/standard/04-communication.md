@@ -77,14 +77,14 @@ sequenceDiagram
     participant IMR as IMR (already running)
 
     Note over IMR,BROKER: earlier: IMR published retained identity
-    IMR->>BROKER: publish /ISO_21423/v1/IMR/&lt;uuid&gt;/identity (retained)
+    IMR->>BROKER: publish /ISO_21423/v1/IMR/{uuid}/identity (retained)
 
     NEW->>BROKER: subscribe /ISO_21423/v1/+/+/identity
     BROKER-->>NEW: retained identity of IMR (instantly)
     BROKER-->>NEW: retained identities of every other entity
     Note over NEW: full population map, seconds after connecting
 
-    NEW->>BROKER: subscribe /ISO_21423/v1/IMR/&lt;uuid&gt;/odometry
+    NEW->>BROKER: subscribe /ISO_21423/v1/IMR/{uuid}/odometry
     BROKER-->>NEW: live positions begin flowing
 ```
 
@@ -110,7 +110,7 @@ sequenceDiagram
     participant FM as Traffic manager
 
     IMR->>BROKER: CONNECT (persistent, keepalive 60 s,<br/>will = disconnection topic, retained)
-    FM->>BROKER: subscribe .../IMR/&lt;uuid&gt;/disconnection
+    FM->>BROKER: subscribe .../IMR/{uuid}/disconnection
 
     Note over IMR: Wi-Fi dies — no DISCONNECT sent
     Note over BROKER: keep-alive expires

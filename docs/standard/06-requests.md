@@ -17,11 +17,11 @@ sequenceDiagram
     participant B as Broker
     participant R as Receiver (e.g. IMR)
 
-    S->>B: publish request (QoS 2, retained)<br/>topic: .../IMR/&lt;uuid&gt;/request/&lt;requestUuid&gt;
+    S->>B: publish request (QoS 2, retained)<br/>topic: .../IMR/{uuid}/request/{requestUuid}
     B->>R: deliver request
 
     R->>B: requestStatus: RECEIVED
-    B->>S: (via .../request/&lt;requestUuid&gt;/status)
+    B->>S: (via .../request/{requestUuid}/status)
     R->>B: requestStatus: ACCEPTED
     B->>S: ...
     R->>B: requestStatus: EXECUTING
