@@ -59,7 +59,7 @@ sequenceDiagram
     Note over IMR: approaching, subscribed to the door's status
     IMR->>DOOR: request { details: [ { type: "openDoor" } ] }
     DOOR-->>IMR: requestStatus: RECEIVED, ACCEPTED, EXECUTING
-    Note over DOOR: motor runs; status topic → DOOR_OPEN
+    Note over DOOR: motor runs — status topic → DOOR_OPEN
     DOOR-->>IMR: requestStatus: SUCCEEDED
     Note over IMR: drives through
     IMR->>DOOR: request { details: [ { type: "closeDoor" } ] }

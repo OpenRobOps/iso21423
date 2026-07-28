@@ -115,7 +115,7 @@ sequenceDiagram
     Note over IMR: Wi-Fi dies — no DISCONNECT sent
     Note over BROKER: keep-alive expires
     BROKER-->>FM: publish will: states: ["LOST_CONNECTION"] (retained)
-    Note over FM: robot treated as offline;<br/>traffic plans around its last known position
+    Note over FM: robot treated as offline —<br/>traffic plans around its last known position
 ```
 
 ## Quality-of-service cheat sheet
