@@ -1,0 +1,19 @@
+{
+  "source": "5f4d2824-d279-4fdf-9050-62e0cef72f25",
+  "sequenceId": 42,
+  "timestamp": "2025-04-08T12:34:56.789Z",
+  "details": [
+    {
+      "type": "move",
+      "version": "0.1",
+      "properties": {
+        "location": {
+          "ccsId": "2385eed2-86ca-4dc9-8f17-dac062ce9a08",
+          "x": 1,
+          "y": 2,
+          "z": 0
+        }
+      }
+    }
+  ]
+}

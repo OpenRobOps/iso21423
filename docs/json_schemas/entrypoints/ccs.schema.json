@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.local/iso21423/v1/ccs.schema.json",
+  "title": "ISO 21423 ccs schema",
+  "description": "Entrypoint schema for validating ISO 21423 ccs payloads. References the canonical bundle.",
+  "$ref": "../iso21423.bundle.schema.json#/$defs/ccs"
+}

@@ -1,0 +1,1143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.local/iso21423/v1/iso21423.bundle.schema.json",
+  "title": "ISO 21423 JSON Schema v1 - corrected bundle",
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Timestamp",
+      "description": "ISO 8601-1 timestamp",
+      "examples": [
+        "2025-04-08T10:00:00.000Z"
+      ]
+    },
+    "point": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "title": "X coordinate"
+        },
+        "y": {
+          "type": "number",
+          "title": "Y coordinate"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "locationPoint": {
+      "type": "object",
+      "properties": {
+        "ccsId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "CCS ID"
+        },
+        "x": {
+          "type": "number",
+          "title": "X coordinate"
+        },
+        "y": {
+          "type": "number",
+          "title": "Y coordinate"
+        },
+        "z": {
+          "type": "number",
+          "title": "Z coordinate"
+        }
+      },
+      "required": [
+        "ccsId",
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "orientation": {
+      "type": "object",
+      "properties": {
+        "yaw": {
+          "type": "number",
+          "title": "yaw",
+          "minimum": -3.1415926,
+          "maximum": 3.1415926
+        },
+        "pitch": {
+          "type": "number",
+          "title": "pitch",
+          "minimum": -3.1415926,
+          "maximum": 3.1415926
+        },
+        "roll": {
+          "type": "number",
+          "title": "roll",
+          "minimum": -3.1415926,
+          "maximum": 3.1415926
+        }
+      },
+      "required": [
+        "yaw",
+        "pitch",
+        "roll"
+      ]
+    },
+    "velocity": {
+      "type": "object",
+      "properties": {
+        "linear": {
+          "type": "number",
+          "title": "Linear velocity"
+        },
+        "angular": {
+          "type": "number",
+          "title": "Angular velocity"
+        }
+      },
+      "required": [
+        "linear",
+        "angular"
+      ]
+    },
+    "pose": {
+      "type": "object",
+      "properties": {
+        "locationPoint": {
+          "$ref": "#/$defs/locationPoint"
+        },
+        "orientation": {
+          "$ref": "#/$defs/orientation"
+        }
+      },
+      "required": [
+        "locationPoint",
+        "orientation"
+      ]
+    },
+    "polygon": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/point"
+      }
+    },
+    "imrFootprint": {
+      "$ref": "#/$defs/polygon"
+    },
+    "softwareVersion": {
+      "type": "object",
+      "properties": {
+        "moduleName": {
+          "type": "string"
+        },
+        "moduleVersion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "moduleName",
+        "moduleVersion"
+      ]
+    },
+    "supportVendorContactInformation": {
+      "type": "object",
+      "description": "Per Table A.4, name is Required; phone, address, and email are Recommended.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "additionalProperty": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ]
+    },
+    "entityCapabilities": {
+      "type": "object",
+      "properties": {
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "accepts": {
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "requests"
+          ]
+        },
+        "manages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Managed entity UUID"
+          }
+        },
+        "managedBy": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Managing entity UUID"
+        }
+      },
+      "required": [
+        "provides",
+        "accepts"
+      ]
+    },
+    "batteryStatus": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "batterySoc": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "batteryHealth": {
+          "type": "string",
+          "default": "UNKNOWN",
+          "enum": [
+            "UNKNOWN",
+            "HEALTHY",
+            "OVERHEAT",
+            "DEAD",
+            "OVERVOLTAGE",
+            "FAILURE",
+            "COLD"
+          ]
+        },
+        "batteryTemperature": {
+          "type": "number"
+        },
+        "batteryVoltage": {
+          "type": "number"
+        },
+        "batteryCurrent": {
+          "type": "number"
+        },
+        "batteryChargingState": {
+          "type": "string",
+          "default": "UNKNOWN",
+          "enum": [
+            "UNKNOWN",
+            "CHARGING",
+            "DISCHARGING",
+            "NOT_CHARGING",
+            "FULL"
+          ]
+        }
+      },
+      "required": [
+        "timestamp",
+        "batterySoc"
+      ]
+    },
+    "locationPointStamped": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "locationPoint": {
+          "$ref": "#/$defs/locationPoint"
+        }
+      },
+      "required": [
+        "timestamp",
+        "locationPoint"
+      ]
+    },
+    "locationPointStampedArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/locationPointStamped"
+      }
+    },
+    "nurbsControlPoint": {
+      "type": "object",
+      "properties": {
+        "locationPoint": {
+          "$ref": "#/$defs/locationPoint"
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1
+        }
+      },
+      "required": [
+        "locationPoint"
+      ]
+    },
+    "nurbsCurve": {
+      "type": "object",
+      "properties": {
+        "degree": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "controlPoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nurbsControlPoint"
+          },
+          "minItems": 2
+        },
+        "knots": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4
+        }
+      },
+      "required": [
+        "degree",
+        "controlPoints",
+        "knots"
+      ]
+    },
+    "localTrajectory": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "localTrajectory": {
+          "$ref": "#/$defs/locationPointStampedArray"
+        }
+      },
+      "required": [
+        "timestamp",
+        "localTrajectory"
+      ]
+    },
+    "globalPlan": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "globalPlan": {
+          "$ref": "#/$defs/locationPointStampedArray"
+        }
+      },
+      "required": [
+        "timestamp",
+        "globalPlan"
+      ]
+    },
+    "globalPath": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "globalPath": {
+          "$ref": "#/$defs/nurbsCurve"
+        }
+      },
+      "required": [
+        "timestamp",
+        "globalPath"
+      ]
+    },
+    "operatingStates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "anyOf": [
+          {
+            "enum": [
+              "STOP_CATEGORY_0",
+              "STOP_CATEGORY_1",
+              "STOP_CATEGORY_2",
+              "PAUSED",
+              "WAIT_FOR_RESET",
+              "MAPPING",
+              "LOST",
+              "WAIT_FOR_ATTACHMENT",
+              "WAIT_FOR_EVENT",
+              "BLOCKED",
+              "ATTACHMENT_ACTIVE",
+              "STOPPED",
+              "DOCKING",
+              "SLOWING",
+              "ACCELERATING",
+              "LEFT_TURN",
+              "RIGHT_TURN",
+              "REVERSE",
+              "FORWARD",
+              "LINE_FOLLOWING",
+              "CHARGING",
+              "LOW_BATTERY",
+              "IDLE",
+              "PARKED",
+              "OFFLINE",
+              "READY",
+              "NOT_READY",
+              "MODE_AUTO",
+              "MODE_SEMIAUTO",
+              "MODE_TELEOP",
+              "MODE_MANUAL",
+              "MODE_MAINTENANCE"
+            ]
+          },
+          {
+            "pattern": "^[A-Z0-9_]+$"
+          }
+        ]
+      }
+    },
+    "imrIdentity": {
+      "type": "object",
+      "properties": {
+        "imrModel": {
+          "type": "string"
+        },
+        "imrSerialNumber": {
+          "type": "string"
+        },
+        "imrName": {
+          "type": "string"
+        },
+        "imrFootprint": {
+          "$ref": "#/$defs/imrFootprint"
+        },
+        "imrWorkingArea": {
+          "$ref": "#/$defs/polygon"
+        },
+        "imrHeight": {
+          "type": "number"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratedSpeed": {
+          "type": "number"
+        },
+        "supportedChargerTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "batteryType": {
+          "type": "string"
+        },
+        "supportVendorContactInformation": {
+          "$ref": "#/$defs/supportVendorContactInformation"
+        },
+        "payloadTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ratedLoad": {
+          "type": "number"
+        },
+        "supportUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "imrDocumentation": {
+          "type": "string",
+          "format": "uri"
+        },
+        "softwareVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/softwareVersion"
+          }
+        },
+        "visualThumbnailImage": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/additionalProperty"
+          }
+        }
+      },
+      "required": [
+        "imrModel",
+        "imrSerialNumber",
+        "imrFootprint",
+        "imrWorkingArea",
+        "imrHeight",
+        "softwareVersions"
+      ]
+    },
+    "imrfmIdentity": {
+      "type": "object",
+      "properties": {
+        "imrfmModel": {
+          "type": "string"
+        },
+        "imrfmName": {
+          "type": "string"
+        },
+        "supportVendorContactInformation": {
+          "$ref": "#/$defs/supportVendorContactInformation"
+        },
+        "supportUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "imrfmDocumentation": {
+          "type": "string",
+          "format": "uri"
+        },
+        "softwareVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/softwareVersion"
+          }
+        }
+      },
+      "required": [
+        "softwareVersions"
+      ]
+    },
+    "entityIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Entity ID"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "entityType": {
+          "type": "string",
+          "anyOf": [
+            {
+              "enum": [
+                "IMR",
+                "IMRFM"
+              ]
+            },
+            {
+              "pattern": "^[A-Z0-9_]+$"
+            }
+          ]
+        },
+        "manufacturerName": {
+          "type": "string"
+        },
+        "iso21423Version": {
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/entityCapabilities"
+        },
+        "details": {
+          "type": "object",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/imrIdentity"
+            },
+            {
+              "$ref": "#/$defs/imrfmIdentity"
+            },
+            {
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "timestamp",
+        "entityType",
+        "manufacturerName",
+        "capabilities"
+      ]
+    },
+    "entityStatus": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "entityId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Entity ID"
+        },
+        "states": {
+          "$ref": "#/$defs/operatingStates"
+        },
+        "disabledCapabilities": {
+          "$ref": "#/$defs/entityCapabilities"
+        }
+      },
+      "required": [
+        "timestamp",
+        "entityId",
+        "states"
+      ]
+    },
+    "entityFootprintHeight": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "footprint": {
+          "$ref": "#/$defs/imrFootprint"
+        },
+        "height": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "timestamp",
+        "footprint",
+        "height"
+      ]
+    },
+    "odometry": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "pose": {
+          "$ref": "#/$defs/pose"
+        },
+        "velocity": {
+          "$ref": "#/$defs/velocity"
+        }
+      },
+      "required": [
+        "timestamp",
+        "pose",
+        "velocity"
+      ]
+    },
+    "statusObject": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "RECEIVED",
+            "ACCEPTED",
+            "EXECUTING",
+            "CANCELED",
+            "SUCCEEDED",
+            "ABORTED"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "OK",
+            "GENERAL_FAILURE",
+            "TIMEOUT",
+            "VERSION_NOT_SUPPORTED",
+            "FORMAT_NOT_SUPPORTED",
+            "ACTION_NOT_IMPLEMENTED",
+            "REJECTED",
+            "MALFORMED_REQUEST",
+            "INVALID_IMR_STATE_FOR_ACTION"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "moveRequest": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "$ref": "#/$defs/locationPoint"
+        },
+        "toleranceRadius": {
+          "type": "number"
+        },
+        "orientationTolerance": {
+          "$ref": "#/$defs/orientation"
+        },
+        "arrivalTime": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "location"
+      ]
+    },
+    "cancelRequest": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Source UUID"
+        },
+        "sequenceId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actionId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "source",
+            "sequenceId"
+          ]
+        },
+        {
+          "required": [
+            "source",
+            "requestId"
+          ]
+        }
+      ]
+    },
+    "dockRequest": {
+      "type": "object",
+      "properties": {
+        "dockLocation": {
+          "$ref": "#/$defs/locationPoint"
+        },
+        "dockId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Dock UUID"
+        },
+        "dockActions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "CHARGE",
+              "DUMP",
+              "FILL",
+              "LOAD",
+              "UNLOAD",
+              "PICK",
+              "DROP"
+            ]
+          }
+        },
+        "toleranceRadius": {
+          "type": "number"
+        },
+        "orientationTolerance": {
+          "$ref": "#/$defs/orientation"
+        },
+        "tolerance": {
+          "$ref": "#/$defs/orientation"
+        }
+      },
+      "required": [
+        "dockLocation"
+      ]
+    },
+    "requestDetail": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "default": "ISO-21423"
+        },
+        "blocking": {
+          "type": "boolean",
+          "default": true
+        },
+        "atomic": {
+          "type": "boolean",
+          "default": false
+        },
+        "properties": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "properties"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "move"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "$ref": "#/$defs/moveRequest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pauseImr"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "type": "object",
+                "maxProperties": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "resumeImr"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "type": "object",
+                "maxProperties": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "cancel",
+                  "cancelRequest"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "$ref": "#/$defs/cancelRequest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "dock"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "$ref": "#/$defs/dockRequest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "undock"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "properties": {
+                "type": "object",
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "destination": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Destination UUID"
+        },
+        "source": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Source UUID"
+        },
+        "sequenceId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestDetail"
+          }
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 100
+        },
+        "atomic": {
+          "type": "boolean",
+          "default": false
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestDetail"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "source",
+        "sequenceId",
+        "timestamp",
+        "details"
+      ]
+    },
+    "requestDetailStatus": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "atomic": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/statusObject"
+        },
+        "properties": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "status"
+      ]
+    },
+    "requestStatus": {
+      "type": "object",
+      "properties": {
+        "destination": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Destination UUID"
+        },
+        "source": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Source UUID"
+        },
+        "sequenceId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestSequenceId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "RECEIVED",
+            "ACCEPTED",
+            "EXECUTING",
+            "CANCELED",
+            "SUCCEEDED",
+            "ABORTED",
+            "RECOVERY"
+          ]
+        },
+        "detailStatuses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestDetailStatus"
+          }
+        },
+        "recoveryStatuses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestDetailStatus"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "sequenceId",
+        "requestSequenceId",
+        "timestamp",
+        "status",
+        "detailStatuses"
+      ]
+    },
+    "requestStatusArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/requestStatus"
+      }
+    },
+    "referencePoint": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "Reference point ID"
+        },
+        "name": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "x",
+        "y"
+      ]
+    },
+    "ccs": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "title": "CCS ID"
+        },
+        "name": {
+          "type": "string"
+        },
+        "referencePointIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Reference point ID"
+          },
+          "minItems": 3
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "referencePointIds"
+      ]
+    }
+  }
+}

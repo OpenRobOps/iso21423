@@ -1,0 +1,8 @@
+sequenceDiagram
+    participant Client as Other entity
+    participant FM as Managing IMRFM
+    participant IMR as Managed IMR namespace
+    Client->>FM: request to IMRFM request topic
+    FM->>IMR: publish IMR identity/status/odometry under IMR topic namespace
+    FM->>Client: publish requestStatus on request status topic
+    Note over FM,IMR: IMRFM may accept requests on behalf of managed IMR

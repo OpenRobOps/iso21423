@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> PUBLISHED: sender publishes request
+    PUBLISHED --> RECEIVED: receiver reports RECEIVED
+    RECEIVED --> ACCEPTED: accepted
+    RECEIVED --> ABORTED: rejected / malformed / unsupported
+    ACCEPTED --> EXECUTING: execution begins
+    ACCEPTED --> CANCELED: cancel before execution
+    EXECUTING --> SUCCEEDED: all details succeeded
+    EXECUTING --> ABORTED: unrecoverable failure
+    EXECUTING --> CANCELED: canceled without recovery
+    EXECUTING --> RECOVERY: detail canceled/aborted + recoveries exist
+    RECOVERY --> SUCCEEDED: recovery complete by policy
+    RECOVERY --> ABORTED: recovery fails
+    RECOVERY --> CANCELED: second cancel cancels recovery
+    SUCCEEDED --> [*]
+    ABORTED --> [*]
+    CANCELED --> [*]

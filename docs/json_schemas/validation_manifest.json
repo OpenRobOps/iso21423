@@ -1,0 +1,17 @@
+{
+  "identity": "#/$defs/entityIdentity",
+  "status": "#/$defs/entityStatus",
+  "batteryStatus": "#/$defs/batteryStatus",
+  "footprint": "#/$defs/entityFootprintHeight",
+  "odometry": "#/$defs/odometry",
+  "localTrajectory": "#/$defs/localTrajectory",
+  "globalPath": "#/$defs/globalPath",
+  "globalPlan": "#/$defs/globalPlan",
+  "request": "#/$defs/request",
+  "requestStatus": "#/$defs/requestStatus",
+  "activeRequestsStatus": "#/$defs/requestStatusArray",
+  "ccs": "#/$defs/ccs",
+  "referencePoint": "#/$defs/referencePoint",
+  "locationPoint": "#/$defs/locationPoint",
+  "capabilities": "#/$defs/entityCapabilities"
+}

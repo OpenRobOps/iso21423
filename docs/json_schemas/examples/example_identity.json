@@ -1,0 +1,58 @@
+{
+  "timestamp": "2025-04-08T12:34:56.789Z",
+  "id": "91403a21-7534-4467-99a6-79c46a130fe8",
+  "entityType": "IMR",
+  "manufacturerName": "user",
+  "capabilities": {
+    "provides": [
+      "identity"
+    ],
+    "accepts": {
+      "requests": [
+        "move"
+      ]
+    }
+  },
+  "details": {
+    "imrModel": "m",
+    "imrSerialNumber": "s",
+    "imrFootprint": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 1,
+        "y": 0
+      },
+      {
+        "x": 1,
+        "y": 1
+      }
+    ],
+    "imrWorkingArea": [
+      {
+        "x": 0,
+        "y": 0
+      },
+      {
+        "x": 2,
+        "y": 0
+      },
+      {
+        "x": 2,
+        "y": 2
+      }
+    ],
+    "imrHeight": 1,
+    "softwareVersions": [
+      {
+        "moduleName": "core",
+        "moduleVersion": "1"
+      }
+    ],
+    "supportVendorContactInformation": {
+      "name": "SupportCo"
+    }
+  }
+}
