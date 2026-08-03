@@ -1,0 +1,306 @@
+{
+  "standard": "ISO/FDIS 21423:2026 draft",
+  "scope": "Industrial mobile robot communication and interoperability in shared industrial environments. Safety and navigation requirements are outside scope.",
+  "protocol": {
+    "transport": "MQTT",
+    "normativeReference": "ISO/IEC 20922 MQTT v3.1.1",
+    "jsonReference": "ISO/IEC 21778",
+    "rootNamespace": "/ISO_21423/v1",
+    "topicPattern": "/ISO_21423/v1/<entityType>/<entityUuid>/<resourceName>",
+    "session": {
+      "persistentSessionRequired": true,
+      "keepAliveSeconds": 60,
+      "lastWill": {
+        "topic": "/ISO_21423/v1/<entityType>/<entityUuid>/disconnection",
+        "qos": 1,
+        "retain": true,
+        "message": {
+          "states": [
+            "LOST_CONNECTION"
+          ]
+        }
+      }
+    }
+  },
+  "entities": {
+    "supportedEntityTypes": [
+      "IMR",
+      "IMRFM"
+    ],
+    "extensionModel": "Other entity types may be added by deployment agreement; examples include doors.",
+    "identityModel": {
+      "entity": "A sender or receiver of JSON messages.",
+      "managedEntityRules": [
+        "An entity managing other entities publishes data for each managed entity under that managed entity topic structure.",
+        "A managing entity can accept requests on behalf of managed entities.",
+        "A managed entity can also accept its own request messages."
+      ]
+    }
+  },
+  "resources": {
+    "identity": {
+      "schemaPointer": "#/$defs/entityIdentity",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Entity identity and capabilities; published on startup and when changed."
+    },
+    "status": {
+      "schemaPointer": "#/$defs/entityStatus",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Entity status."
+    },
+    "batteryStatus": {
+      "schemaPointer": "#/$defs/batteryStatus",
+      "qos": 0,
+      "streaming": false,
+      "retained": true,
+      "description": "Battery state information."
+    },
+    "footprint": {
+      "schemaPointer": "#/$defs/entityFootprintHeight",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Active footprint and height."
+    },
+    "odometry": {
+      "schemaPointer": "#/$defs/odometry",
+      "qos": 0,
+      "streaming": true,
+      "frequency": "0.5-30 Hz",
+      "description": "Pose and velocity."
+    },
+    "localTrajectory": {
+      "schemaPointer": "#/$defs/localTrajectory",
+      "qos": 0,
+      "streaming": true,
+      "frequency": "1-10 Hz",
+      "description": "Local trajectory."
+    },
+    "globalPath": {
+      "schemaPointer": "#/$defs/globalPath",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Global path."
+    },
+    "globalPlan": {
+      "schemaPointer": "#/$defs/globalPlan",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Global plan."
+    },
+    "request/<requestUuid>": {
+      "schemaPointer": "#/$defs/request",
+      "qos": 2,
+      "streaming": false,
+      "retained": true,
+      "description": "Request messages sent to an entity."
+    },
+    "request/<requestUuid>/status": {
+      "schemaPointer": "#/$defs/requestStatus",
+      "qos": 2,
+      "streaming": false,
+      "retained": true,
+      "description": "Status for a specific request."
+    },
+    "activeRequestsStatus": {
+      "schemaPointer": "#/$defs/requestStatusArray",
+      "qos": 1,
+      "streaming": false,
+      "retained": true,
+      "description": "Statuses of all active requests being executed by an entity."
+    }
+  },
+  "requestProtocol": {
+    "sequence": [
+      "Sender publishes request to receiver.",
+      "Receiver publishes requestStatus on any state change.",
+      "Terminal requestStatus is CANCELED, SUCCEEDED, or ABORTED.",
+      "When a request reaches a terminal state, publisher clears retained request by publishing a zero-byte payload to the same request topic."
+    ],
+    "statusUpdateRule": "Status updates are sent only if state changes; not periodically.",
+    "nonInterruptibleDeliveryRequired": true,
+    "requiredRequestActionsWhenLocationReportable": [
+      "move",
+      "pauseImr",
+      "resumeImr",
+      "cancel"
+    ],
+    "recommendedDockingActionsWhenDockingSupported": [
+      "dock",
+      "undock"
+    ],
+    "requestStatuses": [
+      "RECEIVED",
+      "ACCEPTED",
+      "EXECUTING",
+      "CANCELED",
+      "SUCCEEDED",
+      "ABORTED",
+      "RECOVERY"
+    ],
+    "detailStatuses": [
+      "RECEIVED",
+      "ACCEPTED",
+      "EXECUTING",
+      "CANCELED",
+      "SUCCEEDED",
+      "ABORTED"
+    ],
+    "statusReasons": [
+      "OK",
+      "GENERAL_FAILURE",
+      "TIMEOUT",
+      "VERSION_NOT_SUPPORTED",
+      "FORMAT_NOT_SUPPORTED",
+      "ACTION_NOT_IMPLEMENTED",
+      "REJECTED",
+      "MALFORMED_REQUEST",
+      "INVALID_IMR_STATE_FOR_ACTION"
+    ],
+    "concurrencyStrategiesSuggestedByStandard": [
+      "Abort new request.",
+      "Accept new request, buffer it, cancel active request, then execute buffered request.",
+      "Accept new request, buffer it, execute after current request completes.",
+      "Execute multiple requests in parallel.",
+      "Execute multiple requests in priority order."
+    ]
+  },
+  "stateMachines": {
+    "request": {
+      "states": [
+        "RECEIVED",
+        "ACCEPTED",
+        "EXECUTING",
+        "RECOVERY",
+        "CANCELED",
+        "SUCCEEDED",
+        "ABORTED"
+      ],
+      "terminalStates": [
+        "CANCELED",
+        "SUCCEEDED",
+        "ABORTED"
+      ],
+      "transitions": [
+        {
+          "from": "PUBLISHED",
+          "to": "RECEIVED",
+          "trigger": "receiver acknowledges request reception"
+        },
+        {
+          "from": "RECEIVED",
+          "to": "ACCEPTED",
+          "trigger": "receiver accepts request"
+        },
+        {
+          "from": "RECEIVED",
+          "to": "ABORTED",
+          "trigger": "receiver rejects or cannot process request"
+        },
+        {
+          "from": "ACCEPTED",
+          "to": "EXECUTING",
+          "trigger": "execution begins"
+        },
+        {
+          "from": "ACCEPTED",
+          "to": "CANCELED",
+          "trigger": "request canceled before execution"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "SUCCEEDED",
+          "trigger": "all required detail actions succeed"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "ABORTED",
+          "trigger": "request terminated by executor without recovery or recovery fails"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "CANCELED",
+          "trigger": "request canceled and no recovery remains"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "RECOVERY",
+          "trigger": "detail canceled or aborted and recoveries are specified"
+        },
+        {
+          "from": "RECOVERY",
+          "to": "SUCCEEDED",
+          "trigger": "recovery actions complete and policy treats recovery as successful completion"
+        },
+        {
+          "from": "RECOVERY",
+          "to": "ABORTED",
+          "trigger": "recovery action canceled or aborted"
+        },
+        {
+          "from": "RECOVERY",
+          "to": "CANCELED",
+          "trigger": "second cancellation cancels recovery"
+        }
+      ]
+    },
+    "requestDetail": {
+      "states": [
+        "RECEIVED",
+        "ACCEPTED",
+        "EXECUTING",
+        "CANCELED",
+        "SUCCEEDED",
+        "ABORTED"
+      ],
+      "terminalStates": [
+        "CANCELED",
+        "SUCCEEDED",
+        "ABORTED"
+      ],
+      "transitions": [
+        {
+          "from": "RECEIVED",
+          "to": "ACCEPTED",
+          "trigger": "detail accepted"
+        },
+        {
+          "from": "RECEIVED",
+          "to": "ABORTED",
+          "trigger": "detail rejected or malformed"
+        },
+        {
+          "from": "ACCEPTED",
+          "to": "EXECUTING",
+          "trigger": "detail execution begins"
+        },
+        {
+          "from": "ACCEPTED",
+          "to": "CANCELED",
+          "trigger": "detail canceled before execution"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "SUCCEEDED",
+          "trigger": "detail completes successfully"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "CANCELED",
+          "trigger": "detail canceled"
+        },
+        {
+          "from": "EXECUTING",
+          "to": "ABORTED",
+          "trigger": "detail execution fails"
+        }
+      ]
+    }
+  }
+}

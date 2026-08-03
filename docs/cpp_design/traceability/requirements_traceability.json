@@ -1,0 +1,122 @@
+[
+  {
+    "id": "REQ-PROTO-001",
+    "kind": "shall",
+    "text": "All messages shall be exchanged over MQTT in accordance with ISO/IEC 20922.",
+    "source": "10.2"
+  },
+  {
+    "id": "REQ-FORMAT-001",
+    "kind": "shall",
+    "text": "Messages shall use JSON in accordance with ISO/IEC 21778 and the Annex A schemas.",
+    "source": "10.3"
+  },
+  {
+    "id": "REQ-TOPIC-001",
+    "kind": "shall/defined",
+    "text": "Topic structure is /ISO_21423/v1/<entityType>/<entityUuid>/<resourceName>.",
+    "source": "B.2.1"
+  },
+  {
+    "id": "REQ-SESSION-001",
+    "kind": "shall",
+    "text": "Every MQTT broker session shall be persistent.",
+    "source": "B.4"
+  },
+  {
+    "id": "REQ-SESSION-002",
+    "kind": "shall",
+    "text": "Last Will and Testament shall use the disconnection topic, QoS 1, retained true, and states LOST_CONNECTION.",
+    "source": "B.4"
+  },
+  {
+    "id": "REQ-SESSION-003",
+    "kind": "shall",
+    "text": "A Keep Alive of 60 seconds shall be set.",
+    "source": "B.4"
+  },
+  {
+    "id": "REQ-IDENTITY-001",
+    "kind": "shall",
+    "text": "IMR identity/capability information shall be provided upon start-up or change.",
+    "source": "5.1"
+  },
+  {
+    "id": "REQ-IMR-STATUS-001",
+    "kind": "shall",
+    "text": "IMR location and status information shall be published when required status data changes.",
+    "source": "6.3"
+  },
+  {
+    "id": "REQ-IMRFM-IDENTITY-001",
+    "kind": "shall",
+    "text": "IMRFM identity/capability information shall be provided upon start-up or change.",
+    "source": "7.1"
+  },
+  {
+    "id": "REQ-IMRFM-STATE-001",
+    "kind": "shall",
+    "text": "IMRFM state message shall be sent when state information changes.",
+    "source": "8"
+  },
+  {
+    "id": "REQ-REQUEST-001",
+    "kind": "shall",
+    "text": "IMR or IMRFM shall be capable of sending and receiving request and requestStatus messages.",
+    "source": "9"
+  },
+  {
+    "id": "REQ-REQUEST-002",
+    "kind": "shall",
+    "text": "IMRs or IMRFMs that can report location shall support move, pauseImr, resumeImr, and cancel request messages.",
+    "source": "9"
+  },
+  {
+    "id": "REQ-REQUEST-003",
+    "kind": "shall",
+    "text": "Receiver responds with requestStatus upon any state change for the request.",
+    "source": "9"
+  },
+  {
+    "id": "REQ-REQUEST-004",
+    "kind": "shall",
+    "text": "Status updates shall be sent only if state changes, not periodically.",
+    "source": "9"
+  },
+  {
+    "id": "REQ-REQUEST-005",
+    "kind": "shall",
+    "text": "When terminal, the last requestStatus indicates CANCELED, SUCCEEDED, or ABORTED.",
+    "source": "9"
+  },
+  {
+    "id": "REQ-REQUEST-006",
+    "kind": "shall",
+    "text": "When a request reaches terminal state, retained request is cleared by publishing zero-byte payload to same topic.",
+    "source": "B.5.3"
+  },
+  {
+    "id": "REQ-MANAGED-001",
+    "kind": "shall",
+    "text": "An entity managing other entities shall publish data for each entity following each entity topic structure.",
+    "source": "B.5.2.4.1"
+  },
+  {
+    "id": "REQ-CCS-001",
+    "kind": "shall",
+    "text": "All fleets operating in the same physical space shall use the same common coordinate system.",
+    "source": "4.1"
+  },
+  {
+    "id": "REQ-CCS-002",
+    "kind": "shall",
+    "text": "At least three reference points per CCS shall be identified.",
+    "source": "4.1"
+  },
+  {
+    "id": "REQ-CCS-003",
+    "kind": "shall",
+    "text": "All UUIDs shall conform with ISO/IEC 9834-8.",
+    "source": "4.1"
+  }
+]

@@ -1,0 +1,231 @@
+%% ISO 21423 Library — High-Level Class Diagram
+%% Convention: Result~T~ denotes std::expected<T, model::Error> (C++23).
+%%             Subscription is an RAII token (D-19). Transport is injected (D-07).
+%%             Requests originate only from EntityHandle (D-09).
+classDiagram
+direction LR
+
+class Iso21423Client {
+  +create(config ClientConfig, transport TransportInterface, security SecurityPolicy)$ Result~ClientPtr~
+  +register_self_entity(reg EntityRegistration) Result~EntityHandle~
+  +register_managed_entity(manager Uuid, reg ManagedEntityRegistration) Result~EntityHandle~
+  +list_managed_entities(manager Uuid) vector~EntityHandle~
+  +subscribe_entities(filter EntityFilter, handler IdentityHandler) Subscription
+  +subscribe_resource(kind ResourceKind, filter EntityFilter, handler ResourceHandler) Subscription
+  +subscribe_requests(filter RequestFilter, handler RequestEventHandler) Subscription
+  +subscribe_request_status(filter RequestStatusFilter, handler RequestStatusHandler) Subscription
+  +publish_device_state(update DeviceStateUpdate) Result~void~
+  +subscribe_device_states(filter DeviceFilter, handler DeviceStateHandler) Subscription
+  +set_default_execution_policy(policy ExecutionPolicyPtr) Result~void~
+  +set_observability(sink ObservabilitySinkPtr) void
+  +health() ClientHealth
+  +shutdown(timeout milliseconds) Result~void~
+}
+
+class EntityHandle {
+  +entity_uuid() Uuid
+  +entity_type() EntityType
+  +ownership_mode() OwnershipMode
+  +publish_identity(identity EntityIdentity) Result~void~
+  +publish_status(update StatusUpdate) Result~void~
+  +publish_battery_status(update BatteryStatusUpdate) Result~void~
+  +publish_odometry(sample OdometrySample) Result~void~
+  +publish_local_trajectory(sample LocalTrajectorySample) Result~void~
+  +publish_global_path(snapshot GlobalPathSnapshot) Result~void~
+  +publish_global_plan(snapshot GlobalPlanSnapshot) Result~void~
+  +publish_footprint(footprint Footprint) Result~void~
+  +send_request(cmd RequestCommand) Result~RequestHandle~
+  +accept_requests(filter RequestAcceptanceFilter, handler IncomingRequestHandler) Subscription
+  +set_execution_policy(policy ExecutionPolicyPtr) Result~void~
+  +unregister() Result~void~
+}
+
+class RequestHandle {
+  +request_uuid() Uuid
+  +source_uuid() Uuid
+  +sequence_id() uint64_t
+  +destination() optional~Uuid~
+  +created_at() TimePoint
+  +latest_status() RequestStatusSnapshot
+  +stream_status(handler RequestStatusHandler) Subscription
+  +cancel(cmd CancelRequestCommand) Result~void~
+}
+
+class IncomingRequest {
+  +request() RequestView
+  +source() Uuid
+  +sequence_id() uint64_t
+  +accept() Result~void~
+  +reject(reason StatusReason) Result~void~
+  +update_status(update RequestStatusUpdate) Result~void~
+  +update_detail_status(update RequestDetailStatusUpdate) Result~void~
+  +complete(terminal RequestTerminalUpdate) Result~void~
+}
+
+class Subscription {
+  +cancel() void
+  +active() bool
+  +topic_filters() vector~string~
+}
+
+class TransportInterface {
+  <<interface>>
+  +connect(will optional~WillSpec~) Result~void~
+  +disconnect() Result~void~
+  +publish(topic string, payload bytes, qos Qos, retain bool) Result~void~
+  +subscribe(filter string, cb MessageCallback) Result~void~
+  +unsubscribe(filter string) Result~void~
+  +on_connection_state(cb ConnectionStateCallback) void
+  +is_connected() bool
+}
+
+class WillSpec {
+  +topic string
+  +payload bytes
+  +qos Qos
+  +retain bool
+}
+
+class TopicRouter {
+  +resource_topic(type EntityType, entity Uuid, kind ResourceKind) string
+  +request_topic(type EntityType, entity Uuid, request Uuid) string
+  +request_status_topic(type EntityType, entity Uuid, request Uuid) string
+  +disconnection_topic(type EntityType, entity Uuid) string
+  +resource_filter(filter EntityFilter, kind ResourceKind) string
+  +parse(topic string) Result~TopicParts~
+}
+
+class SchemaRegistry {
+  +create(config SchemaRegistryConfig)$ Result~SchemaRegistry~
+  +validate(kind ResourceKind, payload json) ValidationReport
+  +validate_topic(topic string) TopicValidationReport
+  +resource_for_topic(topic string) optional~ResourceKind~
+}
+
+class RequestExecutor {
+  +on_request(incoming IncomingRequest) Result~void~
+  +set_policy(policy ExecutionPolicyPtr) void
+  +tick() Result~void~
+  +active_requests() vector~RequestStatusSnapshot~
+}
+
+class RequestStateMachine {
+  +transition(from RequestState, event RequestEvent) Result~RequestState~
+  +is_terminal(state RequestState) bool
+}
+
+class RequestDetailStateMachine {
+  +transition(from RequestDetailState, event RequestDetailEvent) Result~RequestDetailState~
+  +is_terminal(state RequestDetailState) bool
+}
+
+class ExecutionPolicy {
+  <<interface>>
+  +admit(pending RequestView, active vector~RequestStatusSnapshot~) AdmissionDecision
+}
+
+class ConformanceEngine {
+  +run(scope ConformanceScope, tier ConformanceTier) ConformanceReport
+  +check_payloads(scope ConformanceScope) vector~Finding~
+  +check_topics(scope ConformanceScope) vector~Finding~
+  +check_session(scope ConformanceScope) vector~Finding~
+  +check_publication(scope ConformanceScope) vector~Finding~
+  +check_lifecycle(scope ConformanceScope) vector~Finding~
+  +check_managed_entities(scope ConformanceScope) vector~Finding~
+  +check_ccs(scope ConformanceScope) vector~Finding~
+}
+
+class ObservabilitySink {
+  <<interface>>
+  +on_metric(metric Metric) void
+  +on_event(event DiagnosticEvent) void
+}
+
+class EntityType {
+  <<enumeration>>
+  IMR
+  IMRFM
+  TrafficController
+  Device
+  Other
+}
+
+class OwnershipMode {
+  <<enumeration>>
+  Self
+  Managed
+}
+
+class RequestState {
+  <<enumeration>>
+  Received
+  Accepted
+  Executing
+  Recovery
+  Succeeded
+  Canceled
+  Aborted
+}
+
+class RequestDetailState {
+  <<enumeration>>
+  Received
+  Accepted
+  Executing
+  Succeeded
+  Canceled
+  Aborted
+}
+
+class ResourceKind {
+  <<enumeration>>
+  Identity
+  Capabilities
+  Status
+  BatteryStatus
+  Footprint
+  Odometry
+  LocalTrajectory
+  GlobalPath
+  GlobalPlan
+  ActiveRequestsStatus
+  Ccs
+  ReferencePoint
+  LocationPoint
+  Request
+  RequestStatus
+}
+
+class ConformanceTier {
+  <<enumeration>>
+  Must
+  Should
+  May
+}
+
+Iso21423Client "1" o-- "0..*" EntityHandle : registers
+Iso21423Client --> TransportInterface : uses (injected)
+Iso21423Client --> TopicRouter : uses
+Iso21423Client --> SchemaRegistry : uses
+Iso21423Client --> ObservabilitySink : reports to
+Iso21423Client ..> Subscription : returns
+
+EntityHandle ..> RequestHandle : send_request
+EntityHandle ..> IncomingRequest : accept_requests
+EntityHandle --> RequestExecutor : drives
+EntityHandle --> TopicRouter : uses
+EntityHandle --> SchemaRegistry : validates via
+
+RequestExecutor --> RequestStateMachine : uses
+RequestExecutor --> RequestDetailStateMachine : uses
+RequestExecutor --> ExecutionPolicy : consults
+RequestExecutor ..> IncomingRequest : produces
+
+TransportInterface ..> WillSpec : accepts on connect
+ConformanceEngine --> SchemaRegistry : uses
+ConformanceEngine --> TopicRouter : uses
+
+EntityHandle --> EntityType
+EntityHandle --> OwnershipMode
+RequestExecutor --> RequestState
+RequestExecutor --> RequestDetailState

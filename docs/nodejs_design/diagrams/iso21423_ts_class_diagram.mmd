@@ -1,0 +1,178 @@
+%% ISO 21423 NodeJS SDK — High-Level Class Diagram
+%% Convention: async methods return Promise~T~; errors are typed exceptions (ND-16).
+%%             Subscription is a disposable token (D-19). Transport is injected (D-07).
+%%             Requests originate from EntityHandle (D-09); FleetGateway is a facade over core.
+classDiagram
+direction LR
+
+class Iso21423Client {
+  +connect(opts ClientConnectOptions)$ Promise~Iso21423Client~
+  +registerSelfEntity(reg EntityRegistration) Promise~EntityHandle~
+  +registerManagedEntity(manager Uuid, reg ManagedEntityRegistration) Promise~EntityHandle~
+  +listManagedEntities(manager Uuid) EntityHandle[]
+  +subscribeEntities(filter EntityFilter, handler IdentityHandler) Promise~Subscription~
+  +subscribeResource(kind ResourceKind, filter EntityFilter, handler ResourceHandler) Promise~Subscription~
+  +subscribeRequests(filter RequestFilter, handler RequestEventHandler) Promise~Subscription~
+  +subscribeRequestStatus(filter RequestStatusFilter, handler RequestStatusHandler) Promise~Subscription~
+  +discover() EntityCatalog
+  +setDefaultExecutionPolicy(policy ExecutionPolicy) void
+  +health() ClientHealth
+  +on(event string, cb Function) void
+  +close(opts CloseOptions) Promise~void~
+}
+
+class EntityHandle {
+  +entityUuid Uuid
+  +entityType string
+  +ownershipMode OwnershipMode
+  +publishIdentity(identity EntityIdentity) Promise~void~
+  +updateIdentity(partial PartialIdentity) Promise~void~
+  +publishStatus(update StatusUpdate) Promise~void~
+  +publishBatteryStatus(update BatteryStatus) Promise~void~
+  +publishOdometry(sample Odometry) Promise~void~
+  +publishLocalTrajectory(sample LocalTrajectory) Promise~void~
+  +publishGlobalPath(snapshot GlobalPath) Promise~void~
+  +publishGlobalPlan(snapshot GlobalPlan) Promise~void~
+  +sendRequest(cmd RequestCommand) Promise~RequestHandle~
+  +acceptRequests(filter RequestAcceptanceFilter, handler IncomingRequestHandler) Promise~Subscription~
+  +onRequest(type string, handler ActionHandler) void
+  +setExecutionPolicy(policy ExecutionPolicy) void
+  +unregister() Promise~void~
+}
+
+class FleetGateway {
+  +connect(opts GatewayOptions)$ Promise~FleetGateway~
+  +imrfm EntityHandle
+  +registerImr(reg ImrRegistration) EntityHandle
+  +unregisterImr(id Uuid) Promise~void~
+  +onRequest(type string, handler ActionHandler) void
+  +onDispatch(cb DispatchCallback) void
+  +close() Promise~void~
+}
+
+class RequestHandle {
+  +requestUuid Uuid
+  +sourceUuid Uuid
+  +sequenceId number
+  +destination Uuid
+  +createdAt Date
+  +latestStatus() RequestStatus
+  +onStatus(handler RequestStatusHandler) Subscription
+  +completion() Promise~RequestStatus~
+  +cancel(opts CancelOptions) Promise~void~
+}
+
+class IncomingRequest {
+  +request Request
+  +source Uuid
+  +sequenceId number
+  +accept() Promise~void~
+  +reject(reason StatusReason) Promise~void~
+  +updateStatus(update RequestStatusUpdate) Promise~void~
+  +updateDetailStatus(update RequestDetailStatusUpdate) Promise~void~
+  +complete(terminal RequestTerminalUpdate) Promise~void~
+}
+
+class Subscription {
+  +unsubscribe() Promise~void~
+  +active boolean
+  +topicFilters string[]
+}
+
+class MqttTransport {
+  <<interface>>
+  +connect(opts TransportConnectOptions) Promise~void~
+  +publish(topic string, payload Buffer, opts PublishOptions) Promise~void~
+  +subscribe(filter string, opts SubscribeOptions) Promise~GrantResult~
+  +unsubscribe(filter string) Promise~void~
+  +onMessage(cb MessageCallback) void
+  +onConnectionState(cb ConnectionStateCallback) void
+  +end() Promise~void~
+}
+
+class Iso21423Session {
+  +connect(opts SessionOptions)$ Promise~Iso21423Session~
+  +publishResource(ref EntityRef, resource string, kind MessageKind, payload unknown) Promise~void~
+  +subscribeResource(filter TopicFilter, resource string, kind MessageKind, handler Handler) Promise~Subscription~
+  +clearRetained(topic string) Promise~void~
+  +close(finalStates string[]) Promise~void~
+}
+
+class SchemaRegistry {
+  +validate(kind MessageKind, payload unknown) ValidationReport
+  +assertValid(kind MessageKind, payload unknown) void
+  +normalizeIngress(kind MessageKind, payload unknown) NormalizedPayload
+}
+
+class TopicRegistry {
+  +resourceTopic(ref EntityRef, resource string) string
+  +requestTopic(ref EntityRef, request Uuid) string
+  +requestStatusTopic(ref EntityRef, request Uuid) string
+  +disconnectionTopic(ref EntityRef) string
+  +resourceFilter(filter EntityFilter, resource string) string
+  +parse(topic string) TopicParts
+  +qosRetainFor(resource string) ResourceConfig
+}
+
+class RequestExecutor {
+  +onIncoming(req IncomingRequest) void
+  +setPolicy(policy ExecutionPolicy) void
+  +activeRequests() RequestStatus[]
+}
+
+class RequestLifecycle {
+  +state RequestState
+  +transition(to RequestState) void
+  +canTransition(to RequestState) boolean
+  +isTerminal() boolean
+}
+
+class ExecutionPolicy {
+  <<interface>>
+  +admit(pending Request, active RequestStatus[]) AdmissionDecision
+}
+
+class ScenarioRunner {
+  +run(scope ConformanceScope, tier ConformanceTier) ConformanceReport
+}
+
+class OwnershipMode {
+  <<enumeration>>
+  self
+  managed
+}
+
+class RequestState {
+  <<enumeration>>
+  RECEIVED
+  ACCEPTED
+  EXECUTING
+  RECOVERY
+  SUCCEEDED
+  CANCELED
+  ABORTED
+}
+
+Iso21423Client "1" o-- "0..*" EntityHandle : registers
+Iso21423Client --> Iso21423Session : uses
+Iso21423Client ..> Subscription : returns
+FleetGateway --> Iso21423Client : facade over
+FleetGateway ..> EntityHandle : registerImr
+
+EntityHandle ..> RequestHandle : sendRequest
+EntityHandle ..> IncomingRequest : acceptRequests
+EntityHandle --> RequestExecutor : drives
+
+Iso21423Session --> MqttTransport : injected (D-07)
+Iso21423Session --> TopicRegistry : uses
+Iso21423Session --> SchemaRegistry : validates via
+
+RequestExecutor --> RequestLifecycle : validates transitions
+RequestExecutor --> ExecutionPolicy : consults (D-17)
+RequestExecutor ..> IncomingRequest : produces
+
+ScenarioRunner --> SchemaRegistry : uses
+ScenarioRunner --> TopicRegistry : uses
+
+EntityHandle --> OwnershipMode
+RequestLifecycle --> RequestState

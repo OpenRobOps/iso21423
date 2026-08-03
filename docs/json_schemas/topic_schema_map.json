@@ -1,0 +1,66 @@
+{
+  "rootNamespace": "/ISO_21423/v1",
+  "topicPattern": "/ISO_21423/v1/<entityType>/<entityUuid>/<resourceName>",
+  "resources": {
+    "identity": {
+      "schemaEntrypoint": "entrypoints/identity.schema.json",
+      "bundlePointer": "#/$defs/entityIdentity"
+    },
+    "status": {
+      "schemaEntrypoint": "entrypoints/status.schema.json",
+      "bundlePointer": "#/$defs/entityStatus"
+    },
+    "batteryStatus": {
+      "schemaEntrypoint": "entrypoints/batteryStatus.schema.json",
+      "bundlePointer": "#/$defs/batteryStatus"
+    },
+    "footprint": {
+      "schemaEntrypoint": "entrypoints/footprint.schema.json",
+      "bundlePointer": "#/$defs/entityFootprintHeight"
+    },
+    "odometry": {
+      "schemaEntrypoint": "entrypoints/odometry.schema.json",
+      "bundlePointer": "#/$defs/odometry"
+    },
+    "localTrajectory": {
+      "schemaEntrypoint": "entrypoints/localTrajectory.schema.json",
+      "bundlePointer": "#/$defs/localTrajectory"
+    },
+    "globalPath": {
+      "schemaEntrypoint": "entrypoints/globalPath.schema.json",
+      "bundlePointer": "#/$defs/globalPath"
+    },
+    "globalPlan": {
+      "schemaEntrypoint": "entrypoints/globalPlan.schema.json",
+      "bundlePointer": "#/$defs/globalPlan"
+    },
+    "request": {
+      "schemaEntrypoint": "entrypoints/request.schema.json",
+      "bundlePointer": "#/$defs/request"
+    },
+    "requestStatus": {
+      "schemaEntrypoint": "entrypoints/requestStatus.schema.json",
+      "bundlePointer": "#/$defs/requestStatus"
+    },
+    "activeRequestsStatus": {
+      "schemaEntrypoint": "entrypoints/activeRequestsStatus.schema.json",
+      "bundlePointer": "#/$defs/requestStatusArray"
+    },
+    "ccs": {
+      "schemaEntrypoint": "entrypoints/ccs.schema.json",
+      "bundlePointer": "#/$defs/ccs"
+    },
+    "referencePoint": {
+      "schemaEntrypoint": "entrypoints/referencePoint.schema.json",
+      "bundlePointer": "#/$defs/referencePoint"
+    },
+    "locationPoint": {
+      "schemaEntrypoint": "entrypoints/locationPoint.schema.json",
+      "bundlePointer": "#/$defs/locationPoint"
+    },
+    "capabilities": {
+      "schemaEntrypoint": "entrypoints/capabilities.schema.json",
+      "bundlePointer": "#/$defs/entityCapabilities"
+    }
+  }
+}
