@@ -4,7 +4,14 @@
 
 **Goal:** Build the protocol-primitive layers of `@openrobops/iso21423` — types, topics, schema validation, CCS geometry, request state machine, in-memory test transport, and the conformant MQTT session — fully unit-tested.
 
-**Architecture:** Layered library per the approved spec (`docs/superpowers/specs/2026-07-27-iso21423-sdk-design.md`): `types` → `topics`/`schema`/`geometry` → `session`, with an `MqttTransport` interface isolating the `mqtt` package and a `MemoryTransport` fake enabling broker-free tests. The `gateway`/`client` facades are Plan 2; examples/e2e are Plan 3; the ORO bridge is Plan 4.
+**Architecture:** Layered library per the approved design (`docs/nodejs_design/` — start at `docs/nodejs_design/docs/decision_register.md`): `types` → `topics`/`schema`/`geometry` → `session`, with an `MqttTransport` interface isolating the `mqtt` package and a `MemoryTransport` fake enabling broker-free tests. The core/facade layer is Plan 2; examples/e2e are Plan 3; the ORO bridge is Plan 4.
+
+> **Design relocation (2026-08-03):** the original prose spec (`docs/superpowers/specs/2026-07-27-iso21423-sdk-design.md`) has been absorbed into `docs/nodejs_design/` and removed. Inline `spec §…` references below map as follows: §3.1 (wire-format resolutions) → `nodejs_design/docs/nodejs_api.md` §3.1 / decision **ND-04**; §4 (session rules) → `nodejs_api.md` §4 / **ND-08**; §9 → `nodejs_design/docs/testing_strategy.md`; §10 → `deliverables.md`; §11 → `oro_integration.md`.
+>
+> **Design deltas affecting this plan** (from the decision register):
+> - **D-02**: the canonical cancel action is **`cancelRequest`** (emit `cancelRequest`; accept legacy `cancel` inbound with warn + normalize). Anywhere this plan lists standard actions or builders, read `cancel` as `cancelRequest`.
+> - **NP-2**: the Task 6 transition tables stay as written, but four transitions are disputed vs the shared interaction model (`RECEIVED→CANCELED`, `ACCEPTED→ABORTED`, `ACCEPTED→RECOVERY` allowed here / absent there; `RECOVERY→SUCCEEDED` the reverse) — flag them with code comments referencing NP-2 so they're easy to revisit against the final Figure C.3 artwork.
+> - **D-19**: `Subscription` objects should also implement `Symbol.asyncDispose` (alias of `unsubscribe`).
 
 **Tech Stack:** TypeScript 5, Node ≥22, tsup (dual CJS+ESM+d.ts), vitest, ajv + ajv-formats, uuid, mqtt v5 (peer dependency).
 
@@ -2488,6 +2495,6 @@ git commit -m "feat: conformant Iso21423Session (LWT, QoS registry, on-change, r
 
 ## Out of scope for this plan (later plans)
 
-- **Plan 2 — Facades:** real `mqtt`-backed transport, `FleetGateway` + request executor + concurrency policies + janitor, `Iso21423Client` + discovery + request sender (sequenceId persistence), subpath exports for `/gateway` `/client` etc., integration test suite (spec §9.2 combined scenarios), GitHub Actions CI + GitHub Packages publishing (spec §11.3).
-- **Plan 3 — Examples + e2e:** `imr-simulator`, `imrfm-gateway-template`, `fleet-observer`, `facility-sandbox`, `ScenarioRunner` conformance suite (spec §9.3–9.4, §10).
-- **Plan 4 — ORO bridge:** `oro/ingest/src/server/iso21423/` adapter (spec §11.2), in the `oro` repository.
+- **Plan 2 — Core + facades:** real `mqtt`-backed transport; the `/core` entity-generic layer per the decision register (`Iso21423Client` root, `EntityHandle` as primary actor with `sendRequest`/`acceptRequests`/`onRequest`, `RequestHandle`, `IncomingRequest`, `EntityFilter` observer subscriptions, `ExecutionPolicy` interface + C.2.2 presets with parallel-capable default, discovery `EntityCache`, sequenceId persistence); the `FleetGateway` facade (janitor, dispatch, self-check); subpath exports; integration test suite (`testing_strategy.md` §2); GitHub Actions CI + GitHub Packages publishing (`oro_integration.md` §3).
+- **Plan 3 — Examples + e2e:** `imr-simulator`, `imrfm-gateway-template`, `fleet-observer`, `facility-sandbox`, `ScenarioRunner` conformance suite (`testing_strategy.md` §3–4, `deliverables.md`).
+- **Plan 4 — ORO bridge:** `oro/ingest/src/server/iso21423/` adapter (`oro_integration.md` §2), in the `oro` repository.
