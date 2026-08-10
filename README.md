@@ -17,6 +17,7 @@ with the [plain-language explainer](docs/standard/README.md).
 
 | Path | What it is |
 |---|---|
+| [`ts-sdk/`](ts-sdk/README.md) | **TypeScript SDK** — `@openrobops/iso21423` implementation, build/test/lint instructions |
 | [`docs/standard/`](docs/standard/README.md) | **Understanding ISO 21423** — an 8-chapter educational companion to the standard (overview, participants, CCS, communication, entity data, requests, extensions, glossary) |
 | [`docs/json_schemas/`](docs/json_schemas/README.md) | Annex A JSON Schemas, normalized and corrected for implementation, with example payloads and a Python validator |
 | [`docs/iso-fdis-21423-defects.md`](docs/iso-fdis-21423-defects.md) | Clause-level catalogue of FDIS self-contradictions and gaps, with the SDKs' resolution positions; doubles as ISO/TC 299 comment material |
