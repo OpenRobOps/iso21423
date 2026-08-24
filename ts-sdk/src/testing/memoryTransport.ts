@@ -63,10 +63,17 @@ export class MemoryBroker {
       });
     }
   }
+
+  /** Every live subscription across all clients — for lazy-subscribe and QoS assertions. */
+  subscriptions(): Array<{ clientId: string; filter: string; qos: 0 | 1 | 2 }> {
+    return [...this.clients].flatMap((c) =>
+      c.subscriptions().map((s) => ({ clientId: c.clientId, ...s })));
+  }
 }
 
 export class MemoryTransport implements MqttTransport {
   will: TransportConnectOptions['will'];
+  clientId = '';
   private subs: Sub[] = [];
   private messageCbs: Array<(m: TransportMessage) => void> = [];
   private stateCbs: Array<(s: ConnectionState) => void> = [];
@@ -77,6 +84,7 @@ export class MemoryTransport implements MqttTransport {
 
   async connect(opts: TransportConnectOptions): Promise<void> {
     this.will = opts.will;
+    this.clientId = opts.clientId;
     this.connected = true;
     this.emitState('connected');
   }
@@ -92,13 +100,20 @@ export class MemoryTransport implements MqttTransport {
 
   async subscribe(filter: string, opts: { qos: 0 | 1 | 2 }): Promise<{ granted: boolean }> {
     if (this.broker.isDenied(filter)) return { granted: false };
-    this.subs.push({ filter, qos: opts.qos });
+    // Re-subscribing the same (filter, qos) pair replaces the entry, as on a real broker.
+    if (!this.subs.some((s) => s.filter === filter && s.qos === opts.qos)) {
+      this.subs.push({ filter, qos: opts.qos });
+    }
     this.broker.deliverRetained(this, filter);
     return { granted: true };
   }
 
   async unsubscribe(filter: string): Promise<void> {
     this.subs = this.subs.filter((s) => s.filter !== filter);
+  }
+
+  subscriptions(): ReadonlyArray<{ filter: string; qos: 0 | 1 | 2 }> {
+    return [...this.subs];
   }
 
   onMessage(cb: (m: TransportMessage) => void): void {

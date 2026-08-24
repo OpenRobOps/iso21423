@@ -16,9 +16,18 @@ export interface SessionOptions {
   validateOutbound?: boolean;
 }
 
-export interface Subscription {
+/** Returned by `subscribeTopic` / `subscribeResource`: stop receiving on that filter. */
+export interface SessionSubscription {
   unsubscribe(): Promise<void>;
-  [Symbol.asyncDispose](): Promise<void>;
+}
+
+export interface TopicMeta {
+  topic: string;
+  entityType: string;
+  entityUuid: string;
+  resource: string;
+  requestUuid?: string;
+  isRequestStatus: boolean;
 }
 
 export interface ValidationWarningEvent {
@@ -33,21 +42,22 @@ type SessionEvents = {
   error: (err: unknown) => void;
 };
 
-interface ResourceSub {
+interface TopicSub {
   filter: string;
-  resource: string;
   kind: MessageKind | null;
-  handler: (msg: unknown, meta: { topic: string; entityType: string; entityUuid: string }) => void;
+  handler: (msg: unknown, meta: TopicMeta) => void;
 }
 
 export class Iso21423Session {
   private retainedOwned = new Map<string, { payload: string; qos: 0 | 1 | 2 }>();
   private rateGates = new Map<string, RateGate>();
-  private resourceSubs: ResourceSub[] = [];
+  private topicSubs: TopicSub[] = [];
+  private subscribedFilters = new Map<string, 0 | 1 | 2>();
   private listeners: { [K in keyof SessionEvents]: Array<SessionEvents[K]> } = {
     connection: [], 'validation-warning': [], error: [],
   };
   private wasConnected = false;
+  private state: ConnectionState = 'closed';
 
   private constructor(
     private readonly transport: MqttTransport,
@@ -114,6 +124,57 @@ export class Iso21423Session {
     await this.transport.publish(topic, body, { qos: config.qos, retain: false });
   }
 
+  /** Last non-wildcard resource segment → Table B.1 QoS, defaulting to QoS 1 when unknown. */
+  private qosForFilter(filter: string): 0 | 1 | 2 {
+    const parsed = parseTopic(filter);
+    if (!parsed) return 1;
+    const key = parsed.isRequestStatus ? 'requestStatus' : parsed.resource;
+    return RESOURCE_CONFIG[key]?.qos ?? 1;
+  }
+
+  /** Live subscription count per filter drives the lazy unsubscribe (ND-17). */
+  async subscribeTopic(
+    topicFilter: string,
+    kind: MessageKind | null,
+    handler: (msg: unknown, meta: TopicMeta) => void,
+    opts: { qos?: 0 | 1 | 2 } = {},
+  ): Promise<SessionSubscription> {
+    const qos = opts.qos ?? this.qosForFilter(topicFilter);
+    if (!this.topicSubs.some((s) => s.filter === topicFilter)) {
+      const { granted } = await this.transport.subscribe(topicFilter, { qos });
+      if (!granted) {
+        throw new AuthorizationDenied(`subscription denied by broker: ${topicFilter}`, topicFilter);
+      }
+    }
+    const sub: TopicSub = { filter: topicFilter, kind, handler };
+    this.topicSubs.push(sub);
+    this.subscribedFilters.set(topicFilter, qos);
+    return {
+      unsubscribe: async () => {
+        this.topicSubs = this.topicSubs.filter((s) => s !== sub);
+        if (!this.topicSubs.some((s) => s.filter === topicFilter)) {
+          this.subscribedFilters.delete(topicFilter);
+          await this.transport.unsubscribe(topicFilter);
+        }
+      },
+    };
+  }
+
+  /** Publish to an exact topic (request / requestStatus topics are not plain resources). */
+  async publishTopic(
+    topic: string,
+    kind: MessageKind | null,
+    payload: unknown,
+    opts: { qos: 0 | 1 | 2; retain: boolean },
+  ): Promise<void> {
+    if (kind && this.validateOutbound) assertValid(kind, payload);
+    await this.transport.publish(topic, JSON.stringify(payload), opts);
+  }
+
+  get connectionState(): ConnectionState {
+    return this.state;
+  }
+
   /**
    * Subscribe to a resource topic with optional validation.
    * When kind is null, handler receives raw payload text without parsing or validation.
@@ -122,27 +183,13 @@ export class Iso21423Session {
     filter: { entityType?: string; entityUuid?: string },
     resource: string,
     kind: MessageKind | null,
-    handler: ResourceSub['handler'],
-  ): Promise<Subscription> {
+    handler: (msg: unknown, meta: TopicMeta) => void,
+  ): Promise<SessionSubscription & { [Symbol.asyncDispose](): Promise<void> }> {
     const config = RESOURCE_CONFIG[resource];
     if (!config) throw new Iso21423Error(`unknown resource "${resource}"`);
     const topicFilter = `${ROOT_NAMESPACE}/${filter.entityType ?? '+'}/${filter.entityUuid ?? '+'}/${resource}`;
-    const { granted } = await this.transport.subscribe(topicFilter, { qos: config.qos });
-    if (!granted) {
-      throw new AuthorizationDenied(`subscription denied by broker: ${topicFilter}`, topicFilter);
-    }
-    const sub: ResourceSub = { filter: topicFilter, resource, kind, handler };
-    this.resourceSubs.push(sub);
-    const cleanup = async () => {
-      this.resourceSubs = this.resourceSubs.filter((s) => s !== sub);
-      if (!this.resourceSubs.some((s) => s.filter === topicFilter)) {
-        await this.transport.unsubscribe(topicFilter);
-      }
-    };
-    return {
-      unsubscribe: cleanup,
-      [Symbol.asyncDispose]: cleanup,
-    };
+    const sub = await this.subscribeTopic(topicFilter, kind, handler, { qos: config.qos });
+    return { unsubscribe: sub.unsubscribe, [Symbol.asyncDispose]: sub.unsubscribe };
   }
 
   async publishRaw(topic: string, payload: string, opts: { qos: 0 | 1 | 2; retain: boolean }): Promise<void> {
@@ -169,15 +216,23 @@ export class Iso21423Session {
   private dispatch(topic: string, payload: Buffer): void {
     const parsed = parseTopic(topic);
     if (!parsed) return;
-    for (const sub of this.resourceSubs) {
-      if (parsed.resource !== sub.resource) continue;
+    const text = payload.toString();
+    const meta: TopicMeta = {
+      topic,
+      entityType: parsed.entityType,
+      entityUuid: parsed.entityUuid,
+      resource: parsed.resource,
+      requestUuid: parsed.requestUuid,
+      isRequestStatus: parsed.isRequestStatus,
+    };
+    for (const sub of this.topicSubs) {
       if (!topicFilterMatches(sub.filter, topic)) continue;
-      const meta = { topic, entityType: parsed.entityType, entityUuid: parsed.entityUuid };
-      const text = payload.toString();
       if (!sub.kind) {
         sub.handler(text, meta);
         continue;
       }
+      // An empty payload on a validated subscription is a retained-clear, not malformed input.
+      if (text === '') continue;
       let value: unknown;
       try {
         value = JSON.parse(text);
@@ -195,6 +250,7 @@ export class Iso21423Session {
   }
 
   private handleConnectionState(s: ConnectionState): void {
+    this.state = s;
     for (const cb of this.listeners.connection) cb(s);
     if (s === 'connected' && this.wasConnected) {
       // Reconnect: republish owned retained resources (broker may have lost them).

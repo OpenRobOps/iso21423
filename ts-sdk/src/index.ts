@@ -7,3 +7,4 @@ export * from './schema/index.js';
 export * from './geometry/index.js';
 export * from './requests/index.js';
 export * from './session/index.js';
+export * from './core/index.js';
