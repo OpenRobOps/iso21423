@@ -13,6 +13,7 @@ import { messageKindFor } from './resources.js';
 import {
   toTimestamp, type EntityRegistration, type LocalTrajectoryUpdate, type RequestCommand,
   type StatusUpdate, type WithOptionalTimestamp, type ExecutionPolicy,
+  type ActionHandler,
 } from './types.js';
 import type { SequenceCounter } from './sequence.js';
 import type { EntityCache } from './entityCache.js';
@@ -22,6 +23,7 @@ import { RequestServer } from './requestServer.js';
 import type { IncomingRequest } from './incomingRequest.js';
 import type { RequestAcceptanceFilter } from './filters.js';
 import { composeSubscription, type Subscription } from './subscription.js';
+import { ActionExecutor } from './executor.js';
 
 /** Internal seam shared by the publication, requester and executor mixins (Tasks 4–7). */
 export interface EntityContext {
@@ -51,6 +53,7 @@ export class EntityHandle {
   #identity: EntityIdentity;
   #states: OperatingState[] = [];
   #requestServer?: RequestServer;
+  #executor?: ActionExecutor;
   #executionPolicy?: ExecutionPolicy;
   #registrationPolicy?: ExecutionPolicy;
 
@@ -200,6 +203,25 @@ export class EntityHandle {
         }
       },
     }]);
+  }
+
+  /**
+   * Registers a per-action handler (Task 7, ND-11.1): the `ActionExecutor` becomes the fallback
+   * consumer on this handle's `RequestServer` — low-level `acceptRequests` filters still win when
+   * they match, otherwise any request whose details this executor recognizes is driven through
+   * the executor's sequencing/atomic/recovery/cancelRequest logic. Registering a second handler
+   * for the same `type` without `override: true` throws.
+   */
+  onRequest<P = Record<string, unknown>>(
+    type: string, handler: ActionHandler<P>, opts?: { override?: true },
+  ): void {
+    if (!this.#executor) {
+      this.#executor = new ActionExecutor();
+      if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
+      this.#requestServer.setExecutor(this.#executor, this);
+      void this.#requestServer.ensureStarted().catch(() => {});
+    }
+    this.#executor.register(type, handler as ActionHandler, opts);
   }
 
   /**

@@ -1,5 +1,5 @@
 import type { Uuid } from '../types/common.js';
-import type { Request, RequestDetailStatus, RequestStatus } from '../types/requests.js';
+import type { Request, RequestDetail, RequestDetailStatus, RequestStatus } from '../types/requests.js';
 import type { DetailState, RequestState } from '../types/constants.js';
 import { DetailLifecycle, RequestLifecycle } from '../requests/stateMachine.js';
 import { IllegalTransition } from '../errors.js';
@@ -17,6 +17,8 @@ export class IncomingRequest {
   readonly #lifecycle = new RequestLifecycle();
   readonly #details: DetailLifecycle[];
   readonly #detailStatuses: RequestDetailStatus[];
+  #recoveries?: DetailLifecycle[];
+  #recoveryStatuses?: RequestDetailStatus[];
 
   /** @internal */
   constructor(
@@ -74,9 +76,43 @@ export class IncomingRequest {
     await this.transitionTo(terminal.status, terminal.reason, terminal.message);
   }
 
-  /** @internal — used by the executor for the RECOVERY phase. */
-  async enterRecovery(reason?: StatusReason): Promise<void> {
+  /** @internal — used by the executor for the RECOVERY phase: transitions the request to
+   *  RECOVERY and seeds `recoveryStatuses` from the request's declared `recoveries`, mirroring
+   *  how the constructor seeds `detailStatuses` from `request.details`. */
+  async enterRecovery(recoveries: RequestDetail[], reason?: StatusReason): Promise<void> {
+    this.#recoveries = recoveries.map(() => new DetailLifecycle());
+    this.#recoveryStatuses = recoveries.map((d) => ({
+      type: d.type,
+      version: d.version,
+      ...(d.blocking !== undefined ? { blocking: d.blocking } : {}),
+      status: { code: 'RECEIVED' as DetailState },
+    }));
     await this.transitionTo('RECOVERY', reason);
+  }
+
+  /** @internal — used by the executor to report a recovery detail's progress/outcome. Unlike
+   *  `updateDetailStatus`, recovery entries are never cascaded by a terminal request transition
+   *  (RECOVERY has no detail-level equivalent — see cascadeDetails), so the executor must call
+   *  this for every recovery detail as it finishes, not just the non-last ones. */
+  async updateRecoveryStatus(update: RequestDetailStatusUpdate): Promise<void> {
+    const lifecycle = this.#recoveries?.[update.index];
+    const entry = this.#recoveryStatuses?.[update.index];
+    if (!lifecycle || !entry) {
+      throw new IllegalTransition(`no recovery detail at index ${update.index}`);
+    }
+    // Recovery lifecycles are never cascaded by the request (see enterRecovery), so — unlike
+    // main details, which arrive at EXECUTING already advanced through ACCEPTED by the cascade —
+    // the executor's first update (EXECUTING, starting the recovery detail) must step through
+    // ACCEPTED itself here.
+    if (update.status === 'EXECUTING' && lifecycle.state === 'RECEIVED') lifecycle.transition('ACCEPTED');
+    if (lifecycle.state !== update.status) lifecycle.transition(update.status);
+    entry.status = {
+      code: update.status,
+      ...(update.reason ? { reason: update.reason } : {}),
+      ...(update.message ? { message: update.message } : {}),
+    };
+    if (update.properties) entry.properties = { ...entry.properties, ...update.properties };
+    await this.emit();
   }
 
   private async transitionTo(
@@ -115,6 +151,9 @@ export class IncomingRequest {
       timestamp: toTimestamp(),
       status: this.#lifecycle.state,
       detailStatuses: this.#detailStatuses.map((d) => ({ ...d })),
+      ...(this.#recoveryStatuses
+        ? { recoveryStatuses: this.#recoveryStatuses.map((d) => ({ ...d })) }
+        : {}),
     };
     if (reason || message) {
       const first = status.detailStatuses[0];

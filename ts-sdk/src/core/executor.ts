@@ -1,0 +1,239 @@
+import { Iso21423Error } from '../errors.js';
+import { PROTOCOL_VERSION } from '../types/constants.js';
+import type { DetailState } from '../types/constants.js';
+import type { Request, RequestDetail } from '../types/requests.js';
+import { IncomingRequest } from './incomingRequest.js';
+import type { EntityHandle } from './entityHandle.js';
+import type { RequestKey } from './policies.js';
+import {
+  type ActionContext, type ActionHandler, type ActionResult, type StatusReason,
+  type TypedRequestDetail,
+} from './types.js';
+
+/** States that block ordinary actions until cleared (decision 7). */
+const BLOCKING_STATES = ['STOP_CATEGORY_0', 'STOP_CATEGORY_1', 'STOP_CATEGORY_2', 'WAIT_FOR_RESET'];
+/** Action types exempt from the blocking-state check (decision 7) and from ACTION_NOT_IMPLEMENTED
+ *  (cancelRequest is resolved by the executor itself, never dispatched to a handler). */
+const STATE_EXEMPT_TYPES = new Set(['cancelRequest', 'pauseImr', 'resumeImr']);
+
+const majorOf = (version: string): string => version.split('.')[0] ?? version;
+
+interface ActiveRun {
+  controller: AbortController;
+  /** Set when a cancelRequest arrived while an atomic detail was executing (or otherwise). */
+  cancelRequested: boolean;
+}
+
+type StepOutcome = { trigger: 'success' } | { trigger: 'abort' | 'cancel'; reason?: StatusReason; message?: string };
+
+/** Groups detail indices into sequencing steps: a run of consecutive `blocking: false` details
+ *  is one concurrent step; every `blocking: true` (default) detail is its own step. */
+function groupSteps(details: readonly RequestDetail[]): number[][] {
+  const steps: number[][] = [];
+  let i = 0;
+  while (i < details.length) {
+    if (details[i]!.blocking === false) {
+      const group: number[] = [];
+      while (i < details.length && details[i]!.blocking === false) { group.push(i); i++; }
+      steps.push(group);
+    } else {
+      steps.push([i]);
+      i++;
+    }
+  }
+  return steps;
+}
+
+/**
+ * The per-action executor (ND-11.1): runs `EntityHandle.onRequest` handlers against admitted
+ * requests, driving detail sequencing, atomic protection, cancelRequest resolution and recovery.
+ * See task-7-brief.md for the exact behavior list.
+ */
+export class ActionExecutor {
+  private readonly handlers = new Map<string, ActionHandler>();
+  private readonly runs = new Map<string, ActiveRun>();
+
+  register(type: string, handler: ActionHandler, opts?: { override?: true }): void {
+    if (this.handlers.has(type) && !opts?.override) {
+      throw new Iso21423Error(
+        `onRequest: a handler for "${type}" is already registered — pass { override: true } to replace it`);
+    }
+    this.handlers.set(type, handler as ActionHandler);
+  }
+
+  hasHandlers(): boolean { return this.handlers.size > 0; }
+
+  private runKey(source: string, sequenceId: number): string { return `${source}:${sequenceId}`; }
+
+  /** Fires the AbortController for an admitted request the policy is preempting (Task 7 seam). */
+  cancel(key: RequestKey): boolean {
+    const run = this.runs.get(this.runKey(key.source, key.sequenceId));
+    if (!run) return false;
+    run.cancelRequested = true;
+    run.controller.abort();
+    return true;
+  }
+
+  /** ND-11.1: cancelRequest is resolved by the executor itself, never dispatched to an app
+   *  handler. `cancelReq` is the cancelRequest's own IncomingRequest. */
+  async resolveCancelRequest(cancelReq: IncomingRequest): Promise<void> {
+    const props = cancelReq.request.details[0]?.properties as
+      { source?: string; requestId?: number } | undefined;
+    const found = props?.source !== undefined && props.requestId !== undefined
+      ? this.cancel({ source: props.source, sequenceId: props.requestId })
+      : false;
+    if (found) {
+      // SUCCEEDED is only reachable from EXECUTING (Figure C.3) — the cancel op has no detail
+      // work of its own to run, so step straight through ACCEPTED/EXECUTING.
+      await cancelReq.accept();
+      await cancelReq.updateStatus({ status: 'EXECUTING' });
+      await cancelReq.complete({ status: 'SUCCEEDED' });
+    } else {
+      await cancelReq.reject('REJECTED');
+    }
+  }
+
+  /** Entry point called once a request is admitted (RequestServer step 6 fallback). */
+  async run(incoming: IncomingRequest, entity: EntityHandle): Promise<void> {
+    const request = incoming.request;
+
+    const preflight = this.preflightReject(request, entity);
+    if (preflight) {
+      await incoming.reject(preflight);
+      return;
+    }
+
+    await incoming.accept();
+    await incoming.updateStatus({ status: 'EXECUTING' });
+
+    const key = this.runKey(request.source, request.sequenceId);
+    const run: ActiveRun = { controller: new AbortController(), cancelRequested: false };
+    this.runs.set(key, run);
+    let outcome: StepOutcome;
+    try {
+      outcome = await this.runSequence(request.details, request, entity, run, true,
+        (index, patch) => incoming.updateDetailStatus({ index, ...patch }));
+    } finally {
+      this.runs.delete(key);
+    }
+
+    if (outcome.trigger === 'success') {
+      await incoming.complete({ status: 'SUCCEEDED' });
+      return;
+    }
+
+    const trigger = outcome.trigger;
+    let { reason, message } = outcome;
+    if (request.recoveries && request.recoveries.length > 0) {
+      await incoming.enterRecovery(request.recoveries, reason);
+      const recoveryRun: ActiveRun = { controller: run.controller, cancelRequested: run.cancelRequested };
+      const recoveryOutcome = await this.runSequence(
+        request.recoveries, request, entity, recoveryRun, false,
+        (index, patch) => incoming.updateRecoveryStatus({ index, ...patch }));
+      if (recoveryOutcome.trigger !== 'success') {
+        reason = recoveryOutcome.reason ?? reason;
+        message = recoveryOutcome.message ?? message;
+      }
+    }
+
+    const finalStatus = trigger === 'cancel' ? 'CANCELED' : 'ABORTED';
+    await incoming.complete({ status: finalStatus, reason, message });
+  }
+
+  /** Runs one detail array (main details or recoveries) under the shared sequencing rules
+   *  (item 3), atomic protection (item 4) and outcome mapping (item 5). `allowSkipLastSuccess`
+   *  lets the caller rely on the request-level terminal cascade for the very last detail of a
+   *  clean success run (main details only — recoveryStatuses is never cascaded). */
+  private async runSequence(
+    items: readonly RequestDetail[], request: Request, entity: EntityHandle,
+    run: ActiveRun, allowSkipLastSuccess: boolean,
+    update: (index: number, patch: {
+      status: DetailState; reason?: StatusReason; message?: string; properties?: Record<string, unknown>;
+    }) => Promise<void>,
+  ): Promise<StepOutcome> {
+    const steps = groupSteps(items);
+    for (const group of steps) {
+      const results = await Promise.all(
+        group.map((index) => this.runOneDetail(index, items[index]!, request, entity, run, update)));
+      const batchHasAbort = results.some((r) => r.outcome === 'aborted');
+      const cancelledNow = run.controller.signal.aborted || run.cancelRequested;
+      for (let k = 0; k < group.length; k++) {
+        const index = group[k]!;
+        const result = results[k]!;
+        const isLastOverall = index === items.length - 1;
+        if (result.outcome === 'succeeded') {
+          const skip = allowSkipLastSuccess && isLastOverall && !batchHasAbort && !cancelledNow;
+          if (!skip) {
+            await update(index, { status: 'SUCCEEDED', ...(result.properties ? { properties: result.properties } : {}) });
+          }
+        } else {
+          await update(index, { status: 'ABORTED', reason: result.reason, ...(result.message ? { message: result.message } : {}) });
+        }
+      }
+      if (batchHasAbort || cancelledNow) {
+        const aborted = results.find((r) => r.outcome === 'aborted');
+        return cancelledNow
+          ? { trigger: 'cancel', reason: aborted?.reason, message: aborted?.message }
+          : { trigger: 'abort', reason: aborted?.reason, message: aborted?.message };
+      }
+    }
+    return { trigger: 'success' };
+  }
+
+  private async runOneDetail(
+    index: number, detail: RequestDetail, request: Request, entity: EntityHandle,
+    run: ActiveRun,
+    update: (index: number, patch: {
+      status: DetailState; reason?: StatusReason; message?: string; properties?: Record<string, unknown>;
+    }) => Promise<void>,
+  ): Promise<ActionResult> {
+    const atomic = (detail.atomic ?? false) || (request.atomic ?? false);
+    const signal = atomic ? new AbortController().signal : run.controller.signal;
+
+    await update(index, { status: 'EXECUTING' });
+
+    const pending: Promise<void>[] = [];
+    const ctx: ActionContext = {
+      entity, request, signal,
+      progress: (properties) => { pending.push(update(index, { status: 'EXECUTING', properties })); },
+      succeeded: (properties) => (properties !== undefined ? { outcome: 'succeeded', properties } : { outcome: 'succeeded' }),
+      aborted: (reason, message) => (message !== undefined ? { outcome: 'aborted', reason, message } : { outcome: 'aborted', reason }),
+    };
+
+    const typed: TypedRequestDetail = { ...detail, properties: detail.properties ?? {} };
+    const handler = this.handlers.get(detail.type);
+    let result: ActionResult;
+    try {
+      if (!handler) {
+        result = { outcome: 'aborted', reason: 'ACTION_NOT_IMPLEMENTED' };
+      } else {
+        result = await handler(typed, ctx);
+      }
+    } catch (err) {
+      result = { outcome: 'aborted', reason: 'GENERAL_FAILURE', message: err instanceof Error ? err.message : String(err) };
+    }
+    await Promise.all(pending);
+    return result;
+  }
+
+  /** Item 1: pre-flight rejection, first match wins across the four rule categories, each
+   *  scanned over every detail in order. */
+  private preflightReject(request: Request, entity: EntityHandle): StatusReason | undefined {
+    for (const d of request.details) {
+      if (d.format !== undefined && d.format !== 'ISO-21423') return 'FORMAT_NOT_SUPPORTED';
+    }
+    for (const d of request.details) {
+      if (majorOf(d.version) !== majorOf(PROTOCOL_VERSION)) return 'VERSION_NOT_SUPPORTED';
+    }
+    for (const d of request.details) {
+      if (d.type !== 'cancelRequest' && !this.handlers.has(d.type)) return 'ACTION_NOT_IMPLEMENTED';
+    }
+    const states = entity.lastStates();
+    if (BLOCKING_STATES.some((s) => states.includes(s))) {
+      for (const d of request.details) {
+        if (!STATE_EXEMPT_TYPES.has(d.type)) return 'INVALID_IMR_STATE_FOR_ACTION';
+      }
+    }
+    return undefined;
+  }
+}

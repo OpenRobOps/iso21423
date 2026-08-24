@@ -9,6 +9,8 @@ import { toTimestamp } from './types.js';
 import { IncomingRequest, type StatusSink } from './incomingRequest.js';
 import type { RequestAcceptanceFilter } from './filters.js';
 import { DEFAULT_PRIORITY, type ExecutionPolicy } from './policies.js';
+import type { ActionExecutor } from './executor.js';
+import type { EntityHandle } from './entityHandle.js';
 
 interface Registration { filter: RequestAcceptanceFilter; handler: (req: IncomingRequest) => void }
 
@@ -41,6 +43,9 @@ export class RequestServer {
   private readonly activeStatuses = new Map<string, ActiveRequestData>();
   private readonly pendingRequests: PendingRequest[] = [];
   private readonly sink: StatusSink;
+  // Task 7: the executor is the fallback consumer once no acceptRequests filter matches — see
+  // handleAcceptedRequest / the cancelRequest branch of handleInbound below.
+  private executor?: { executor: ActionExecutor; entity: EntityHandle };
 
   constructor(private readonly ctx: EntityContext) {
     this.sink = {
@@ -58,6 +63,11 @@ export class RequestServer {
     // 'validation-warning' and no rejection would ever be published (D-13).
     this.sessionSub = await this.ctx.session.subscribeTopic(
       filter, null, (msg, meta) => { void this.handleInbound(msg as string, meta); }, { qos: 2 });
+  }
+
+  /** @internal — EntityHandle.onRequest wires the executor in here once, the first time it's used. */
+  setExecutor(executor: ActionExecutor, entity: EntityHandle): void {
+    this.executor = { executor, entity };
   }
 
   register(filter: RequestAcceptanceFilter, handler: (req: IncomingRequest) => void): () => void {
@@ -106,6 +116,14 @@ export class RequestServer {
     // it is on the wire in activeRequestsStatus but invisible to the admission view below — a
     // request never sees itself, or any other buffered request, as active.
 
+    // D-02: a legacy `type: 'cancel'` detail is normalized to `cancelRequest` before anything
+    // else inspects it.
+    const firstDetail = request.details[0];
+    if (firstDetail && firstDetail.type === 'cancel') {
+      this.ctx.diagnostic('legacy-cancel-normalized', { source: request.source, sequenceId: request.sequenceId });
+      firstDetail.type = 'cancelRequest';
+    }
+
     // Task 6: apply the execution policy. A cancelRequest bypasses admission entirely: the whole
     // point of a cancel is to reach a busy entity. Only the *first* detail is inspected — bundled
     // cancels (a cancel riding along with other details) go through normal admission by design.
@@ -116,6 +134,9 @@ export class RequestServer {
       const matching = this.registrations.filter((r) => r.filter.matches(request));
       if (matching.length > 0) {
         for (const r of matching) r.handler(req);
+      } else if (this.executor && this.executor.executor.hasHandlers()) {
+        // ND-11.1: the executor resolves cancelRequest itself, never an app handler.
+        await this.executor.executor.resolveCancelRequest(req);
       } else {
         this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
         await req.reject('ACTION_NOT_IMPLEMENTED');
@@ -224,9 +245,12 @@ export class RequestServer {
             // never be cancelled by a preemption aimed at running work.
             if (!data.admitted) continue;
             if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
-              // Task 7 seam: the executor's AbortSignal fires here; today the request is ended
-              // directly, which is the whole cancellation a low-level handler gets.
-              await data.req.complete({ status: 'CANCELED', reason: 'PREEMPTED' });
+              // Task 7 seam: an executor-run request owns its own completion once its
+              // AbortSignal fires (run() detects cancelRequested and ends it CANCELED itself);
+              // ending it directly here too would race a second, illegal transition. A
+              // low-level acceptRequests handler gets no such signal, so it is still ended here.
+              const executorOwned = this.executor?.executor.cancel(key) ?? false;
+              if (!executorOwned) await data.req.complete({ status: 'CANCELED', reason: 'PREEMPTED' });
             }
           }
         }
@@ -246,7 +270,12 @@ export class RequestServer {
       for (const r of matching) r.handler(req);
       return;
     }
-    // Point 6: no matching low-level handler = no executor either
+    // Task 7: low-level acceptRequests handlers win when their filter matches; otherwise, if any
+    // onRequest handler is registered, the executor runs the request.
+    if (this.executor && this.executor.executor.hasHandlers()) {
+      void this.executor.executor.run(req, this.executor.entity);
+      return;
+    }
     this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
     await req.reject('ACTION_NOT_IMPLEMENTED');
   }
