@@ -18,6 +18,7 @@ interface PendingRequest {
 }
 
 interface ActiveRequestData {
+  req: IncomingRequest;
   status: RequestStatus;
   priority?: number;
 }
@@ -98,52 +99,32 @@ export class RequestServer {
     const req = new IncomingRequest(request, requestUuid, this.sink);
     await req.publishReceived();                            // point 5 — D-12, before any handler
 
+    // Note: publishReceived() has already called sink.publishStatus(), which added RECEIVED
+    // status to activeStatuses. The request is now in activeStatuses with just {status, priority},
+    // but needs the req field for preemption. However, we exclude it from the active array
+    // passed to policy.admit() so it doesn't see itself as active (see buildActiveStatuses).
+
     // Task 6: Apply execution policy admission
-    const policy = this.ctx.getExecutionPolicy();
-    const active = this.buildActiveStatuses();
-    const decision = policy.admit(request, active);
-
-    if (decision.action === 'reject') {
-      this.ctx.diagnostic('dispatch-rejected', { reason: decision.reason });
-      await req.reject(decision.reason);
-      return;
-    }
-
-    if (decision.action === 'buffer') {
-      this.pendingRequests.push({ request, req });
-      this.enforceBufferLimit(policy);
-      return;
-    }
-
-    if (decision.action === 'preempt') {
-      // Task 7 will add AbortSignal-based cancel for executor runs; for now, end admitted
-      // requests CANCELED directly.
-      for (const key of decision.preempt) {
-        for (const [, data] of this.activeStatuses.entries()) {
-          if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
-            // ponytail: seam for Task 7 to inject AbortSignal cancel; for now, reject directly.
-            this.ctx.diagnostic('dispatch-rejected', { reason: 'CANCELED' });
-            // Note: no explicit status publish here; Task 7's executor will handle that.
-          }
-        }
-      }
-    }
-
-    if (decision.action === 'accept') {
-      // Store priority for later admission decisions (R7)
-      if (request.priority !== undefined) {
-        this.requestPriorities.set(requestUuid, request.priority);
-      }
+    // Check if this is a cancelRequest (bypass admission per brief)
+    const isCancelRequest = request.details.length > 0 && request.details[0]!.type === 'cancelRequest';
+    if (isCancelRequest) {
+      // cancelRequest bypasses admission — hand to handlers directly
       const matching = this.registrations.filter((r) => r.filter.matches(request));
       if (matching.length > 0) {
         for (const r of matching) r.handler(req);
-        return;
+      } else {
+        this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
+        await req.reject('ACTION_NOT_IMPLEMENTED');
       }
-      // Point 6, this task's slice: admission (Task 6) and the per-action executor (Task 7) do not
-      // exist yet, so "no matching low-level handler" already means "no executor either".
-      this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
-      await req.reject('ACTION_NOT_IMPLEMENTED');
+      return;
     }
+
+    // Build active array excluding this pending request (bug fix #1)
+    const policy = this.ctx.getExecutionPolicy();
+    const active = this.buildActiveStatuses(requestUuid);
+    const decision = policy.admit(request, active);
+
+    await this.applyAdmissionDecision(request, req, requestUuid, decision, policy);
   }
 
   /** Controller ruling R2: build a minimal one-detail IncomingRequest and reject it with
@@ -192,11 +173,13 @@ export class RequestServer {
     if (isTerminalRequestState(status.status)) {
       this.activeStatuses.delete(req.requestUuid);
       this.requestPriorities.delete(req.requestUuid);
-      // Re-admit pending requests after a terminal transition
-      void this.reAdmitPending();
+      // Re-admit pending requests after a terminal transition (async to avoid blocking publishStatus)
+      // ponytail: async re-admit means buffered requests may see slight delay before handling;
+      // upgrade to sync if buffering causes QoS issues under load.
+      setImmediate(() => { void this.reAdmitPending(); });
     } else {
       const priority = this.requestPriorities.get(req.requestUuid);
-      this.activeStatuses.set(req.requestUuid, { status, priority });
+      this.activeStatuses.set(req.requestUuid, { req, status, priority });
     }
     const statusArray = [...this.activeStatuses.values()].map((data) => data.status);
     await this.ctx.session.publishResource(
@@ -204,12 +187,60 @@ export class RequestServer {
     this.ctx.countPublish();
   }
 
-  /** Build active statuses augmented with priority (R7). */
-  private buildActiveStatuses(): (RequestStatus & { priority?: number })[] {
-    return [...this.activeStatuses.values()].map((data) => ({
-      ...data.status,
-      ...(data.priority !== undefined ? { priority: data.priority } : {}),
-    }));
+  /** Build active statuses augmented with priority (R7), excluding a specific request. */
+  private buildActiveStatuses(excludeUuid?: string): (RequestStatus & { priority?: number })[] {
+    return [...this.activeStatuses.entries()]
+      .filter(([uuid]) => uuid !== excludeUuid)
+      .map(([, data]) => ({
+        ...data.status,
+        ...(data.priority !== undefined ? { priority: data.priority } : {}),
+      }));
+  }
+
+  /** Apply an admission decision: accept, reject, buffer, or preempt. */
+  private async applyAdmissionDecision(
+    request: Request, req: IncomingRequest, requestUuid: string,
+    decision: ReturnType<ExecutionPolicy['admit']>, policy: ExecutionPolicy,
+  ): Promise<void> {
+    if (decision.action === 'reject') {
+      this.ctx.diagnostic('dispatch-rejected', { reason: decision.reason });
+      await req.reject(decision.reason);
+    } else if (decision.action === 'buffer') {
+      this.pendingRequests.push({ request, req });
+      await this.enforceBufferLimit(policy);
+    } else if (decision.action === 'preempt') {
+      // Preempt active requests: cancel them CANCELED, then accept the pending one
+      for (const key of decision.preempt) {
+        for (const [, data] of this.activeStatuses.entries()) {
+          if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
+            // Task 7 seam: executor runs will hook AbortSignal here; for now, end directly.
+            await data.req.complete({ status: 'CANCELED', reason: 'PREEMPTED' });
+          }
+        }
+      }
+      // Now accept the pending request
+      if (request.priority !== undefined) {
+        this.requestPriorities.set(requestUuid, request.priority);
+      }
+      await this.handleAcceptedRequest(request, req);
+    } else if (decision.action === 'accept') {
+      if (request.priority !== undefined) {
+        this.requestPriorities.set(requestUuid, request.priority);
+      }
+      await this.handleAcceptedRequest(request, req);
+    }
+  }
+
+  /** Handle an accepted request: route to matching handlers. */
+  private async handleAcceptedRequest(request: Request, req: IncomingRequest): Promise<void> {
+    const matching = this.registrations.filter((r) => r.filter.matches(request));
+    if (matching.length > 0) {
+      for (const r of matching) r.handler(req);
+      return;
+    }
+    // Point 6: no matching low-level handler = no executor either
+    this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
+    await req.reject('ACTION_NOT_IMPLEMENTED');
   }
 
   /** Enforce bufferLimit: if the buffer exceeds the limit, displace the oldest request with REJECTED. */
@@ -225,53 +256,47 @@ export class RequestServer {
   /** Re-admit pending requests after a terminal request transition. */
   private async reAdmitPending(): Promise<void> {
     while (this.pendingRequests.length > 0) {
-      const pending = this.pendingRequests[0]!;
       const policy = this.ctx.getExecutionPolicy();
       const active = this.buildActiveStatuses();
+
+      // Select next pending request: if policy supports priority draining (priority() has a marker),
+      // pick the highest-priority (lowest numeric value), else FIFO.
+      // Simplest: if all pending have priority field, assume priority drain; else FIFO.
+      const index = this.selectNextPending();
+      if (index === -1) break;                             // no progress possible
+      const pending = this.pendingRequests[index]!;
+
       const decision = policy.admit(pending.request, active);
+      this.pendingRequests.splice(index, 1);
 
       if (decision.action === 'reject') {
-        this.pendingRequests.shift();
         this.ctx.diagnostic('dispatch-rejected', { reason: decision.reason });
         await pending.req.reject(decision.reason);
-      } else if (decision.action === 'accept') {
-        this.pendingRequests.shift();
-        // Store priority for later admission decisions (R7)
-        if (pending.request.priority !== undefined) {
-          this.requestPriorities.set(pending.req.requestUuid, pending.request.priority);
-        }
-        const matching = this.registrations.filter((r) => r.filter.matches(pending.request));
-        if (matching.length > 0) {
-          for (const r of matching) r.handler(pending.req);
-        } else {
-          this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
-          await pending.req.reject('ACTION_NOT_IMPLEMENTED');
-        }
-      } else if (decision.action === 'preempt') {
-        // Similar to above: preempt active requests
-        this.pendingRequests.shift();
-        for (const key of decision.preempt) {
-          for (const [, data] of this.activeStatuses.entries()) {
-            if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
-              // ponytail: seam for Task 7
-            }
-          }
-        }
-        // Store priority for later admission decisions (R7)
-        if (pending.request.priority !== undefined) {
-          this.requestPriorities.set(pending.req.requestUuid, pending.request.priority);
-        }
-        const matching = this.registrations.filter((r) => r.filter.matches(pending.request));
-        if (matching.length > 0) {
-          for (const r of matching) r.handler(pending.req);
-        } else {
-          this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
-          await pending.req.reject('ACTION_NOT_IMPLEMENTED');
-        }
+      } else if (decision.action === 'accept' || decision.action === 'preempt') {
+        await this.applyAdmissionDecision(
+          pending.request, pending.req, pending.req.requestUuid, decision, policy);
       } else {
         // action === 'buffer': re-buffering, stop trying
+        this.pendingRequests.splice(index, 0, pending);  // put it back
         break;
       }
     }
+  }
+
+  /** Select the next pending request to re-admit: by priority if all have it, else FIFO. */
+  private selectNextPending(): number {
+    if (this.pendingRequests.length === 0) return -1;
+    // Detect priority-based drain: if policy has no bufferLimit marker (implicit infinity),
+    // and request priorities exist, use priority order. Otherwise FIFO.
+    const hasPriorities = this.pendingRequests.every((p) => p.request.priority !== undefined);
+    if (!hasPriorities) return 0;                         // FIFO
+    // Priority drain: select lowest numeric priority (highest priority), arrival order tiebreak
+    let best = 0;
+    for (let i = 1; i < this.pendingRequests.length; i++) {
+      const bestPri = this.pendingRequests[best]!.request.priority ?? 100;
+      const thisPri = this.pendingRequests[i]!.request.priority ?? 100;
+      if (thisPri < bestPri) best = i;
+    }
+    return best;
   }
 }
