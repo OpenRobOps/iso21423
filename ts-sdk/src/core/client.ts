@@ -19,6 +19,7 @@ import type {
   ClientHealth, DiagnosticCode, DiagnosticEvent, EntityRegistration, ExecutionPolicy,
   ManagedEntityRegistration, RequestEvent, ResourceEvent, SecurityOptions,
 } from './types.js';
+import { DEFAULT_EXECUTION_POLICY } from './policies.js';
 
 // Lazy module-level singleton (brief: "a shared FileSequenceStore()") — two clients in one
 // process share the same write queue instead of racing separate ones against the same file.
@@ -151,6 +152,11 @@ export class Iso21423Client {
     return [...(this.managedEntities.get(managerUuid) ?? [])];
   }
 
+  /** Set the client-wide default execution policy (P-2), overridable per entity handle. */
+  setDefaultExecutionPolicy(policy: ExecutionPolicy): void {
+    this.defaultExecutionPolicy = policy;
+  }
+
   // ---- observation --------------------------------------------------------
 
   /**
@@ -273,10 +279,6 @@ export class Iso21423Client {
 
   // ---- misc -----------------------------------------------------------------
 
-  setDefaultExecutionPolicy(policy: ExecutionPolicy): void {
-    this.defaultExecutionPolicy = policy;
-  }
-
   health(): ClientHealth {
     return {
       connection: this.session?.connectionState ?? 'closed',
@@ -395,6 +397,13 @@ export class Iso21423Client {
         this.inFlightRequests.add(handle);
         const drop = () => { this.inFlightRequests.delete(handle); };
         handle.completion().then(drop, drop);
+      },
+      getDefaultExecutionPolicy: () => {
+        return this.defaultExecutionPolicy ?? DEFAULT_EXECUTION_POLICY;
+      },
+      getExecutionPolicy: () => {
+        // Resolution order: per-handle override > registration seed > client default > DEFAULT_EXECUTION_POLICY
+        return box.handle!.getExecutionPolicy();
       },
     };
     return { ctx, bindSelf: (handle) => { box.handle = handle; } };

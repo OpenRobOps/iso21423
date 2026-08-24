@@ -3,6 +3,7 @@ export * from './subscription.js';
 export * from './filters.js';
 export * from './sequence.js';
 export * from './types.js';
+export * from './policies.js';
 export * from './entityCache.js';
 export * from './entityHandle.js';
 export * from './requestHandle.js';

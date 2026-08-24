@@ -12,7 +12,7 @@ import { Iso21423Error, NotCapableError } from '../errors.js';
 import { messageKindFor } from './resources.js';
 import {
   toTimestamp, type EntityRegistration, type LocalTrajectoryUpdate, type RequestCommand,
-  type StatusUpdate, type WithOptionalTimestamp,
+  type StatusUpdate, type WithOptionalTimestamp, type ExecutionPolicy,
 } from './types.js';
 import type { SequenceCounter } from './sequence.js';
 import type { EntityCache } from './entityCache.js';
@@ -37,6 +37,10 @@ export interface EntityContext {
   /** Registers a sent request so close()/an offline connection can failFast() it and
    *  health().activeRequests.sent stays accurate; the client drops it once it settles. */
   trackInFlight(handle: RequestHandle): void;
+  /** Get the client's default execution policy. */
+  getDefaultExecutionPolicy(): ExecutionPolicy;
+  /** Get the resolved execution policy for this entity (per-handle > registration > client default > DEFAULT_EXECUTION_POLICY). */
+  getExecutionPolicy(): ExecutionPolicy;
 }
 
 const RETAINED_RESOURCES = [
@@ -47,6 +51,8 @@ export class EntityHandle {
   #identity: EntityIdentity;
   #states: OperatingState[] = [];
   #requestServer?: RequestServer;
+  #executionPolicy?: ExecutionPolicy;
+  #registrationPolicy?: ExecutionPolicy;
 
   /** @internal — constructed by Iso21423Client.registerSelfEntity/registerManagedEntity. */
   constructor(
@@ -66,6 +72,7 @@ export class EntityHandle {
       },
       details: registration.details ?? {},
     };
+    this.#registrationPolicy = registration.executionPolicy;
   }
 
   get entityUuid(): Uuid { return this.ctx.ref.entityUuid; }
@@ -81,6 +88,16 @@ export class EntityHandle {
 
   async updateIdentity(partial: Partial<EntityIdentity>): Promise<void> {
     await this.publishIdentity({ ...this.#identity, ...partial, timestamp: toTimestamp() });
+  }
+
+  /** Set a per-handle execution policy override (P-2). */
+  setExecutionPolicy(policy: ExecutionPolicy): void {
+    this.#executionPolicy = policy;
+  }
+
+  /** Get the resolved execution policy (per-handle > registration > client default > DEFAULT_EXECUTION_POLICY). */
+  getExecutionPolicy(): ExecutionPolicy {
+    return this.#executionPolicy ?? this.#registrationPolicy ?? this.ctx.getDefaultExecutionPolicy();
   }
 
   async publishStatus(update: StatusUpdate): Promise<void> {

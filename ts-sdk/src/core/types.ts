@@ -6,6 +6,7 @@ import type { LocationPointStamped } from '../types/telemetry.js';
 import type { Request, RequestDetail } from '../types/requests.js';
 import { nowTimestamp } from '../types/common.js';
 import type { ResourceKind } from './resources.js';
+import type { ExecutionPolicy } from './policies.js';
 
 /** nodejs_api.md calls the wire enum StatusReason; Plan 1 named it ReasonCode (decision 9). */
 export type StatusReason = ReasonCode;
@@ -18,11 +19,7 @@ export function toTimestamp(t?: Date | IsoTimestamp): IsoTimestamp {
   return nowTimestamp(t ?? new Date());
 }
 
-/**
- * TODO(Task 6): tighten to the real `ExecutionPolicy` from `./policies.ts` once it exists.
- * Structural placeholder only so this task stands alone.
- */
-export interface ExecutionPolicy { admit: (...args: never[]) => unknown }
+export type { ExecutionPolicy };
 
 export interface EntityRegistration {
   entityUuid: Uuid;
