@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MemoryBroker } from '../src/testing/index.js';
 
 const opts = (id: string) => ({ clientId: id, cleanSession: false, keepalive: 60 });
@@ -115,6 +115,7 @@ describe('reconnect and callback error handling', () => {
     await t.connect(opts('t'));
     const delivered: string[] = [];
     let throwCount = 0;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     t.onMessage(() => {
       throwCount++;
       if (throwCount === 1) throw new Error('first subscriber throws once');
@@ -128,5 +129,7 @@ describe('reconnect and callback error handling', () => {
     await new Promise((r) => setImmediate(r));
     expect(delivered).toEqual(['/x']);
     expect(throwCount).toBe(1);
+    expect(spy).toHaveBeenCalledOnce();
+    spy.mockRestore();
   });
 });

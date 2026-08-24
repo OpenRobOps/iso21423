@@ -44,9 +44,7 @@ export class MemoryBroker {
       try {
         c.deliver(msg);
       } catch (err) {
-        queueMicrotask(() => {
-          throw err;
-        });
+        console.error('[MemoryTransport] subscriber callback threw:', err);
       }
     }
   }
@@ -124,9 +122,7 @@ export class MemoryTransport implements MqttTransport {
         try {
           cb(msg);
         } catch (err) {
-          queueMicrotask(() => {
-            throw err;
-          });
+          console.error('[MemoryTransport] subscriber callback threw:', err);
         }
       }
     }
@@ -157,9 +153,7 @@ export class MemoryTransport implements MqttTransport {
       try {
         cb(s);
       } catch (err) {
-        queueMicrotask(() => {
-          throw err;
-        });
+        console.error('[MemoryTransport] subscriber callback threw:', err);
       }
     }
   }
