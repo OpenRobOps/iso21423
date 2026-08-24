@@ -60,6 +60,34 @@ describe('publishResource', () => {
     const s = await connect(broker);
     await expect(s.publishResource(IMR, 'bogus', null, {})).rejects.toThrow(/unknown resource/i);
   });
+
+  it('rolls back retained cache on publish failure', async () => {
+    const broker = new MemoryBroker();
+    let statusPublishCallCount = 0;
+    const failingTransport = new Proxy(broker.createTransport(), {
+      get: (target, prop) => {
+        if (prop === 'publish') {
+          return async (topic: string, payload: string | Buffer, opts: { qos: 0 | 1 | 2; retain: boolean }) => {
+            if (topic === STATUS_TOPIC) {
+              statusPublishCallCount++;
+              if (statusPublishCallCount === 1) {
+                throw new Error('simulated publish failure');
+              }
+            }
+            return (target as any)[prop](topic, payload, opts);
+          };
+        }
+        return (target as any)[prop];
+      },
+    });
+    const s = await Iso21423Session.connect({ transport: failingTransport, entity: IMR });
+    const payload = status(['IDLE', 'MODE_AUTO']);
+    await expect(s.publishResource(IMR, 'status', 'entityStatus', payload))
+      .rejects.toThrow('simulated publish failure');
+    await expect(s.publishResource(IMR, 'status', 'entityStatus', payload))
+      .resolves.toBeUndefined();
+    expect(statusPublishCallCount).toBe(2);
+  });
 });
 
 describe('subscribeResource', () => {

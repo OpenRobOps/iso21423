@@ -91,7 +91,12 @@ export class Iso21423Session {
     if (config.retain) {
       if (this.retainedOwned.get(topic)?.payload === body) return; // on-change rule
       this.retainedOwned.set(topic, { payload: body, qos: config.qos });
-      await this.transport.publish(topic, body, { qos: config.qos, retain: true });
+      try {
+        await this.transport.publish(topic, body, { qos: config.qos, retain: true });
+      } catch (err) {
+        this.retainedOwned.delete(topic);
+        throw err;
+      }
       return;
     }
     if (config.maxHz !== undefined) {
