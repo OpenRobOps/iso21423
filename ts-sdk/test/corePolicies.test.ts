@@ -138,18 +138,22 @@ describe('Server admission wiring (Task 6 integration)', () => {
     expect(s2Error).toContain('ABORTED');
   });
 
-  it.skip('queueAfter: second request buffers and runs after first completes', async () => {
+  it('queueAfter: second request buffers and runs after first completes', async () => {
     const broker = new MemoryBroker();
     const { robotHandle, requesterHandle } = await setup(broker, policies.queueAfter());
     const runOrder: string[] = [];
 
     await robotHandle.acceptRequests(RequestAcceptanceFilter.all(), async (req) => {
-      runOrder.push(`start-${req.sequenceId}`);
-      await req.accept();
-      await req.updateStatus({ status: 'EXECUTING' });
-      await new Promise((r) => setTimeout(r, 50));
-      await req.complete({ status: 'SUCCEEDED' });
-      runOrder.push(`end-${req.sequenceId}`);
+      try {
+        runOrder.push(`start-${req.sequenceId}`);
+        await req.accept();
+        await req.updateStatus({ status: 'EXECUTING' });
+        await new Promise((r) => setTimeout(r, 50));
+        await req.complete({ status: 'SUCCEEDED' });
+        runOrder.push(`end-${req.sequenceId}`);
+      } catch (e) {
+        runOrder.push(`error-${req.sequenceId}-${String(e)}`);
+      }
     });
 
     const h1 = await requesterHandle.sendRequest({
@@ -163,11 +167,51 @@ describe('Server admission wiring (Task 6 integration)', () => {
     });
     await flush();
 
-    await h1.completion();
-    await flush();
-    await h2.completion();
+    // Buffering is an admission decision, not a protocol stall: RECEIVED is published immediately
+    // (D-12), and ACCEPTED only arrives once the first request reaches a terminal state.
+    expect(h2.latestStatus()?.status).toBe('RECEIVED');
+    expect(runOrder).toEqual(['start-1']);
+
+    const s1 = await h1.completion();
+    const s2 = await h2.completion();
+    await flush();                       // the handler resumes one microtask after completion()
 
     expect(runOrder).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
+    expect(s1.status).toBe('SUCCEEDED');
+    expect(s2.status).toBe('SUCCEEDED');
+  });
+
+  it('queueReplace: a third request displaces the queued one with ABORTED/REJECTED', async () => {
+    const broker = new MemoryBroker();
+    const { robotHandle, requesterHandle } = await setup(broker, policies.queueReplace());
+    const runOrder: string[] = [];
+
+    await robotHandle.acceptRequests(RequestAcceptanceFilter.all(), async (req) => {
+      runOrder.push(`start-${req.sequenceId}`);
+      await req.accept();
+      await req.updateStatus({ status: 'EXECUTING' });
+      await new Promise((r) => setTimeout(r, 30));
+      await req.complete({ status: 'SUCCEEDED' });
+      runOrder.push(`end-${req.sequenceId}`);
+    });
+
+    const send = async (x: number) => requesterHandle.sendRequest({
+      destination: DST,
+      details: [move({ location: { ccsId: CCS, x, y: 0, z: 0 } })],
+    });
+    const h1 = await send(1);
+    await flush();
+    const h2 = await send(2);                              // takes the single buffer slot
+    await flush();
+    const h3 = await send(3);                              // displaces h2
+    await flush();
+
+    await expect(h2.completion()).rejects.toThrow(/ABORTED/);
+    expect(h2.latestStatus()?.detailStatuses[0]?.status.reason).toBe('REJECTED');
+    expect((await h1.completion()).status).toBe('SUCCEEDED');
+    expect((await h3.completion()).status).toBe('SUCCEEDED');
+    await flush();
+    expect(runOrder).toEqual(['start-1', 'end-1', 'start-3', 'end-3']);
   });
 
   it('priority preempt: high-priority request cancels executing low-priority request', async () => {
@@ -246,5 +290,57 @@ describe('Server admission wiring (Task 6 integration)', () => {
 
     expect(handled).toContain('move');
     expect(handled).toContain('cancelRequest');
+  });
+
+  it('priority() drains buffered requests in priority order: 10 before 50', async () => {
+    const broker = new MemoryBroker();
+    const { robotHandle, requesterHandle } = await setup(broker, policies.priority());
+    const runOrder: string[] = [];
+
+    await robotHandle.acceptRequests(RequestAcceptanceFilter.all(), async (req) => {
+      runOrder.push(`start-${req.request.priority ?? 100}`);
+      await req.accept();
+      await req.updateStatus({ status: 'EXECUTING' });
+      await new Promise((r) => setTimeout(r, 50));
+      await req.complete({ status: 'SUCCEEDED' });
+      runOrder.push(`end-${req.request.priority ?? 100}`);
+    });
+
+    // Executing request is priority 5 — better than both newcomers, so neither preempts it.
+    const h1 = await requesterHandle.sendRequest({
+      destination: DST,
+      priority: 5,
+      details: [move({ location: { ccsId: CCS, x: 1, y: 2, z: 0 } })],
+    });
+    await flush();
+
+    // Buffer priority 50
+    const h2 = await requesterHandle.sendRequest({
+      destination: DST,
+      priority: 50,
+      details: [move({ location: { ccsId: CCS, x: 2, y: 3, z: 0 } })],
+    });
+    await flush();
+
+    // Buffer priority 10 (arrives second, must drain first)
+    const h3 = await requesterHandle.sendRequest({
+      destination: DST,
+      priority: 10,
+      details: [move({ location: { ccsId: CCS, x: 3, y: 4, z: 0 } })],
+    });
+    await flush();
+
+    expect(runOrder).toEqual(['start-5']);          // both newcomers buffered, nothing preempted
+
+    const s1 = await h1.completion();
+    const s3 = await h3.completion();
+    const s2 = await h2.completion();
+    await flush();
+
+    // Drain is by priority, not arrival: 10 before 50.
+    expect(runOrder).toEqual(['start-5', 'end-5', 'start-10', 'end-10', 'start-50', 'end-50']);
+    expect(s1.status).toBe('SUCCEEDED');
+    expect(s2.status).toBe('SUCCEEDED');
+    expect(s3.status).toBe('SUCCEEDED');
   });
 });

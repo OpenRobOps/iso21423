@@ -8,7 +8,7 @@ import { isTerminalRequestState } from '../requests/stateMachine.js';
 import { toTimestamp } from './types.js';
 import { IncomingRequest, type StatusSink } from './incomingRequest.js';
 import type { RequestAcceptanceFilter } from './filters.js';
-import type { ExecutionPolicy } from './policies.js';
+import { DEFAULT_PRIORITY, type ExecutionPolicy } from './policies.js';
 
 interface Registration { filter: RequestAcceptanceFilter; handler: (req: IncomingRequest) => void }
 
@@ -21,6 +21,10 @@ interface ActiveRequestData {
   req: IncomingRequest;
   status: RequestStatus;
   priority?: number;
+  /** true = admitted (handed to handler); false = buffered/pending (admission gate only).
+   *  Admission logic sees only admitted=true; wire activeRequestsStatus includes all non-terminal.
+   *  (Distinction: admission control vs. protocol observation.) */
+  admitted: boolean;
 }
 
 /**
@@ -35,7 +39,6 @@ export class RequestServer {
   // broker; persist the key set alongside the sequence seed if that ever bites.
   private readonly seen = new Set<string>();
   private readonly activeStatuses = new Map<string, ActiveRequestData>();
-  private readonly requestPriorities = new Map<string, number>();  // requestUuid -> priority
   private readonly pendingRequests: PendingRequest[] = [];
   private readonly sink: StatusSink;
 
@@ -99,16 +102,17 @@ export class RequestServer {
     const req = new IncomingRequest(request, requestUuid, this.sink);
     await req.publishReceived();                            // point 5 — D-12, before any handler
 
-    // Note: publishReceived() has already called sink.publishStatus(), which added RECEIVED
-    // status to activeStatuses. The request is now in activeStatuses with just {status, priority},
-    // but needs the req field for preemption. However, we exclude it from the active array
-    // passed to policy.admit() so it doesn't see itself as active (see buildActiveStatuses).
+    // publishReceived() has already entered this request in activeStatuses (admitted: false), so
+    // it is on the wire in activeRequestsStatus but invisible to the admission view below — a
+    // request never sees itself, or any other buffered request, as active.
 
-    // Task 6: Apply execution policy admission
-    // Check if this is a cancelRequest (bypass admission per brief)
+    // Task 6: apply the execution policy. A cancelRequest bypasses admission entirely: the whole
+    // point of a cancel is to reach a busy entity. Only the *first* detail is inspected — bundled
+    // cancels (a cancel riding along with other details) go through normal admission by design.
     const isCancelRequest = request.details.length > 0 && request.details[0]!.type === 'cancelRequest';
     if (isCancelRequest) {
-      // cancelRequest bypasses admission — hand to handlers directly
+      // Handed straight to the handlers, and left admitted:false — a cancel is not work, so it
+      // must not block or preempt anything through a later admission check either.
       const matching = this.registrations.filter((r) => r.filter.matches(request));
       if (matching.length > 0) {
         for (const r of matching) r.handler(req);
@@ -119,12 +123,10 @@ export class RequestServer {
       return;
     }
 
-    // Build active array excluding this pending request (bug fix #1)
     const policy = this.ctx.getExecutionPolicy();
-    const active = this.buildActiveStatuses(requestUuid);
-    const decision = policy.admit(request, active);
+    const decision = policy.admit(request, this.buildActiveStatuses());
 
-    await this.applyAdmissionDecision(request, req, requestUuid, decision, policy);
+    await this.applyAdmissionDecision(request, req, decision, policy);
   }
 
   /** Controller ruling R2: build a minimal one-detail IncomingRequest and reject it with
@@ -172,26 +174,32 @@ export class RequestServer {
     // Terminal requests leave the active map first, then the array is republished.
     if (isTerminalRequestState(status.status)) {
       this.activeStatuses.delete(req.requestUuid);
-      this.requestPriorities.delete(req.requestUuid);
       // Re-admit pending requests after a terminal transition (async to avoid blocking publishStatus)
       // ponytail: async re-admit means buffered requests may see slight delay before handling;
       // upgrade to sync if buffering causes QoS issues under load.
       setImmediate(() => { void this.reAdmitPending(); });
     } else {
-      const priority = this.requestPriorities.get(req.requestUuid);
-      this.activeStatuses.set(req.requestUuid, { req, status, priority });
+      // Priority is recorded from the validated Request itself, so it is fixed at RECEIVED time.
+      this.activeStatuses.set(req.requestUuid, {
+        req, status, priority: req.request.priority,
+        admitted: this.activeStatuses.get(req.requestUuid)?.admitted ?? false,
+      });
     }
+    // Protocol view: activeRequestsStatus carries EVERY non-terminal request, buffered ones
+    // included — it is what the entity is serving, not what the policy currently admits.
     const statusArray = [...this.activeStatuses.values()].map((data) => data.status);
     await this.ctx.session.publishResource(
       this.ctx.ref, 'activeRequestsStatus', 'requestStatusArray', statusArray);
     this.ctx.countPublish();
   }
 
-  /** Build active statuses augmented with priority (R7), excluding a specific request. */
-  private buildActiveStatuses(excludeUuid?: string): (RequestStatus & { priority?: number })[] {
-    return [...this.activeStatuses.entries()]
-      .filter(([uuid]) => uuid !== excludeUuid)
-      .map(([, data]) => ({
+  /** The admission view (R7: augmented with priority): only requests a policy decision has
+   *  already admitted. Buffered requests — and the pending request itself, which is entered as
+   *  admitted:false by its own RECEIVED — never appear here. */
+  private buildActiveStatuses(): (RequestStatus & { priority?: number })[] {
+    return [...this.activeStatuses.values()]
+      .filter((data) => data.admitted)
+      .map((data) => ({
         ...data.status,
         ...(data.priority !== undefined ? { priority: data.priority } : {}),
       }));
@@ -199,7 +207,7 @@ export class RequestServer {
 
   /** Apply an admission decision: accept, reject, buffer, or preempt. */
   private async applyAdmissionDecision(
-    request: Request, req: IncomingRequest, requestUuid: string,
+    request: Request, req: IncomingRequest,
     decision: ReturnType<ExecutionPolicy['admit']>, policy: ExecutionPolicy,
   ): Promise<void> {
     if (decision.action === 'reject') {
@@ -208,31 +216,31 @@ export class RequestServer {
     } else if (decision.action === 'buffer') {
       this.pendingRequests.push({ request, req });
       await this.enforceBufferLimit(policy);
-    } else if (decision.action === 'preempt') {
-      // Preempt active requests: cancel them CANCELED, then accept the pending one
-      for (const key of decision.preempt) {
-        for (const [, data] of this.activeStatuses.entries()) {
-          if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
-            // Task 7 seam: executor runs will hook AbortSignal here; for now, end directly.
-            await data.req.complete({ status: 'CANCELED', reason: 'PREEMPTED' });
+    } else {
+      if (decision.action === 'preempt') {
+        for (const key of decision.preempt) {
+          for (const data of this.activeStatuses.values()) {
+            // admitted-only: the keys came from the admission view, and a buffered request must
+            // never be cancelled by a preemption aimed at running work.
+            if (!data.admitted) continue;
+            if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
+              // Task 7 seam: the executor's AbortSignal fires here; today the request is ended
+              // directly, which is the whole cancellation a low-level handler gets.
+              await data.req.complete({ status: 'CANCELED', reason: 'PREEMPTED' });
+            }
           }
         }
-      }
-      // Now accept the pending request
-      if (request.priority !== undefined) {
-        this.requestPriorities.set(requestUuid, request.priority);
-      }
-      await this.handleAcceptedRequest(request, req);
-    } else if (decision.action === 'accept') {
-      if (request.priority !== undefined) {
-        this.requestPriorities.set(requestUuid, request.priority);
       }
       await this.handleAcceptedRequest(request, req);
     }
   }
 
-  /** Handle an accepted request: route to matching handlers. */
+  /** Handle an accepted request: mark as admitted, route to matching handlers. */
   private async handleAcceptedRequest(request: Request, req: IncomingRequest): Promise<void> {
+    // Admitted from here on: this is what makes the request visible to later admission checks.
+    const existing = this.activeStatuses.get(req.requestUuid);
+    if (existing) existing.admitted = true;
+
     const matching = this.registrations.filter((r) => r.filter.matches(request));
     if (matching.length > 0) {
       for (const r of matching) r.handler(req);
@@ -253,50 +261,29 @@ export class RequestServer {
     }
   }
 
-  /** Re-admit pending requests after a terminal request transition. */
+  /** Re-admit buffered requests after a terminal transition, one at a time: each admitted request
+   *  is marked admitted before the next decision is taken, so the drain stops as soon as the
+   *  policy buffers again. Removal from the queue happens before any await, so two overlapping
+   *  drains can never hand the same request to a handler twice. */
   private async reAdmitPending(): Promise<void> {
     while (this.pendingRequests.length > 0) {
       const policy = this.ctx.getExecutionPolicy();
-      const active = this.buildActiveStatuses();
-
-      // Select next pending request: if policy supports priority draining (priority() has a marker),
-      // pick the highest-priority (lowest numeric value), else FIFO.
-      // Simplest: if all pending have priority field, assume priority drain; else FIFO.
-      const index = this.selectNextPending();
-      if (index === -1) break;                             // no progress possible
+      const index = this.selectNextPending(policy);
       const pending = this.pendingRequests[index]!;
-
-      const decision = policy.admit(pending.request, active);
+      const decision = policy.admit(pending.request, this.buildActiveStatuses());
+      if (decision.action === 'buffer') break;             // still blocked: leave the queue as is
       this.pendingRequests.splice(index, 1);
-
-      if (decision.action === 'reject') {
-        this.ctx.diagnostic('dispatch-rejected', { reason: decision.reason });
-        await pending.req.reject(decision.reason);
-      } else if (decision.action === 'accept' || decision.action === 'preempt') {
-        await this.applyAdmissionDecision(
-          pending.request, pending.req, pending.req.requestUuid, decision, policy);
-      } else {
-        // action === 'buffer': re-buffering, stop trying
-        this.pendingRequests.splice(index, 0, pending);  // put it back
-        break;
-      }
+      await this.applyAdmissionDecision(pending.request, pending.req, decision, policy);
     }
   }
 
-  /** Select the next pending request to re-admit: by priority if all have it, else FIFO. */
-  private selectNextPending(): number {
-    if (this.pendingRequests.length === 0) return -1;
-    // Detect priority-based drain: if policy has no bufferLimit marker (implicit infinity),
-    // and request priorities exist, use priority order. Otherwise FIFO.
-    const hasPriorities = this.pendingRequests.every((p) => p.request.priority !== undefined);
-    if (!hasPriorities) return 0;                         // FIFO
-    // Priority drain: select lowest numeric priority (highest priority), arrival order tiebreak
+  /** Next buffered request to drain: lowest numeric priority first when the policy asks for a
+   *  priority drain (arrival order breaking ties), plain FIFO otherwise. */
+  private selectNextPending(policy: ExecutionPolicy): number {
+    if (!policy.drainByPriority) return 0;
+    const pri = (i: number): number => this.pendingRequests[i]!.request.priority ?? DEFAULT_PRIORITY;
     let best = 0;
-    for (let i = 1; i < this.pendingRequests.length; i++) {
-      const bestPri = this.pendingRequests[best]!.request.priority ?? 100;
-      const thisPri = this.pendingRequests[i]!.request.priority ?? 100;
-      if (thisPri < bestPri) best = i;
-    }
+    for (let i = 1; i < this.pendingRequests.length; i++) if (pri(i) < pri(best)) best = i;
     return best;
   }
 }

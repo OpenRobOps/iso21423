@@ -15,9 +15,12 @@ export interface ExecutionPolicy {
   admit(pending: Request, active: readonly RequestStatus[]): AdmissionDecision;
   /** Optional hint: how many buffered requests to hold before displacing the oldest. */
   readonly bufferLimit?: number;
+  /** Optional hint: if true, drain buffered requests by priority; else FIFO. */
+  readonly drainByPriority?: boolean;
 }
 
-const DEFAULT_PRIORITY = 100;                       // 0 high … 255 low (Table C.1)
+/** Table C.1: 0 = highest … 255 = lowest; an omitted priority is mid-scale. */
+export const DEFAULT_PRIORITY = 100;
 const priorityOf = (r: { priority?: number }): number => r.priority ?? DEFAULT_PRIORITY;
 const keyOf = (s: RequestStatus): RequestKey => ({ source: s.source, sequenceId: s.requestSequenceId });
 
@@ -66,7 +69,7 @@ export const policies = {
           : { action: 'buffer' };
       },
     };
-    Object.assign(policy, { bufferLimit: Number.POSITIVE_INFINITY });
+    Object.assign(policy, { bufferLimit: Number.POSITIVE_INFINITY, drainByPriority: true });
     return policy;
   },
 };
