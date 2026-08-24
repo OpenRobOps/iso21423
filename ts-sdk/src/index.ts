@@ -9,3 +9,4 @@ export * from './requests/index.js';
 export type {
   MqttTransport, TransportConnectOptions, TransportMessage, WillOptions, ConnectionState,
 } from './session/transport.js';
+export { RateGate } from './session/rateGate.js';
