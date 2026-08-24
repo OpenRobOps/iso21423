@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Uuid } from '../types/common.js';
 import type { RequestStatus } from '../types/requests.js';
 import type { EntityRef } from '../topics/topics.js';
@@ -49,11 +48,14 @@ export class RequestHandle {
 
   /** @internal — one inbound requestStatus message. */
   ingest(status: RequestStatus): void {
+    // Correlate by requestSequenceId (decision 5), not arrival timing: a retained status from a
+    // prior use of this requestUuid (or a foreign one) must never drive this handle.
+    if (status.requestSequenceId !== this.sequenceId) return;
     this.#latest = status;
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = undefined; }
     for (const cb of this.#listeners) cb(status);
     if (!isTerminalRequestState(status.status)) return;
-    void this.cleanup();
+    void this.clearRetainedRequest();
     if (status.status === 'SUCCEEDED') this.settle(undefined, status);
     else this.settle(new RequestFailed(`request ${this.requestUuid} ended ${status.status}`, status));
   }
@@ -80,6 +82,7 @@ export class RequestHandle {
   completion(): Promise<RequestStatus> { return this.#completion; }
 
   async cancel(opts: { actionId?: number } = {}): Promise<void> {
+    if (this.#settled) return;      // no-op: nothing left to cancel
     await this.ctx.sendCancel(this, opts.actionId);
   }
 
@@ -87,15 +90,24 @@ export class RequestHandle {
     if (this.#settled) return;
     this.#settled = true;
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = undefined; }
+    // Drop the status subscription on every outcome (success, failure, timeout, failFast) —
+    // only ingest()'s terminal path used to do this, leaking it on timeout/failFast. The
+    // retained request itself is untouched here: on timeout/failFast the true outcome is
+    // unknown to us, so ND-10's janitor (Task 8) or the other party owns clearing it.
+    // unsubscribe() is idempotent, so a prior clearRetainedRequest() call racing this is fine.
+    void this.#statusSub?.unsubscribe().catch(() => {});
     if (error) this.#reject(error);
     else this.#resolve(status!);
   }
 
-  /** Sender duty: clear the retained request and drop the status subscription (ND-10). */
-  private async cleanup(): Promise<void> {
-    await this.ctx.session.clearRetained(requestTopic(this.destRef, this.requestUuid));
-    await this.#statusSub?.unsubscribe();
+  /** Sender duty: clear the retained request on a terminal status (ND-10). Never throws — if the
+   *  broker publish fails, Task 8's janitor is the backstop that eventually clears stale
+   *  retained requests. */
+  private async clearRetainedRequest(): Promise<void> {
+    try {
+      await this.ctx.session.clearRetained(requestTopic(this.destRef, this.requestUuid));
+    } catch {
+      // swallow — see comment above
+    }
   }
-
-  static newUuid(): Uuid { return randomUUID(); }
 }

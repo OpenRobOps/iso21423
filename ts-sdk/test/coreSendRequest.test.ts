@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
   Iso21423Client, NotCapableError, RequestFailed, RequestTimeout, move, nowTimestamp,
@@ -192,5 +193,25 @@ describe('sendRequest', () => {
     await expect(handle.sendRequest({
       destination: '', destinationType: 'IMRFM', requireCapability: false, details: [move(target)],
     })).rejects.toThrow(/IMRFM/);
+  });
+
+  it('drops a stale retained status that does not correlate by requestSequenceId (decision 5)', async () => {
+    const broker = new MemoryBroker();
+    const publish = statusPublisher(broker);
+    const { handle } = await requester(broker);
+    const requestUuid = randomUUID();
+    // A retained status left over from a prior (or foreign) use of this requestUuid, delivered
+    // the moment the new handle subscribes — must not settle or drive the new handle.
+    await publish(requestUuid, 'SUCCEEDED', { requestSequenceId: 999 });
+    const req = await handle.sendRequest({
+      destination: DST, destinationType: 'IMR', details: [move(target)], requestUuid, timeoutMs: 200,
+    });
+    await flush();
+    expect(req.latestStatus()).toBeUndefined();
+    // The correctly-correlated status still drives it normally.
+    await publish(req.requestUuid, 'RECEIVED', { requestSequenceId: req.sequenceId });
+    await publish(req.requestUuid, 'SUCCEEDED', { requestSequenceId: req.sequenceId });
+    const final = await req.completion();
+    expect(final.status).toBe('SUCCEEDED');
   });
 });
