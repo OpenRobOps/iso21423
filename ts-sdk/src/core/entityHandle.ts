@@ -174,7 +174,13 @@ export class EntityHandle {
     return composeSubscription([requestFilterTopic], [{
       unsubscribe: async () => {
         deregister();
-        if (server.handlerCount === 0) await server.teardown();
+        if (server.handlerCount === 0) {
+          await server.teardown();
+          // Drop the instance too (not just its subscription): a later acceptRequests() then
+          // builds a fresh RequestServer, so its `seen`/activeStatuses maps start empty instead
+          // of carrying stale state from this handle's previous run.
+          if (this.#requestServer === server) this.#requestServer = undefined;
+        }
       },
     }]);
   }

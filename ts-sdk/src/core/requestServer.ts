@@ -1,5 +1,6 @@
 import type { EntityContext } from './entityHandle.js';
 import { requestStatusTopic } from '../topics/topics.js';
+import { RESOURCE_CONFIG } from '../topics/resources.js';
 import type { TopicMeta, SessionSubscription } from '../session/session.js';
 import type { Request, RequestStatus } from '../types/requests.js';
 import { validateMessage } from '../schema/validators.js';
@@ -134,7 +135,8 @@ export class RequestServer {
   /** The StatusSink: publish the requestStatus, then republish activeRequestsStatus (point 7). */
   private async publishStatus(req: IncomingRequest, status: RequestStatus): Promise<void> {
     const topic = requestStatusTopic(this.ctx.ref, req.requestUuid);
-    await this.ctx.session.publishTopic(topic, 'requestStatus', status, { qos: 2, retain: true });
+    const { qos, retain } = RESOURCE_CONFIG.requestStatus!;
+    await this.ctx.session.publishTopic(topic, 'requestStatus', status, { qos, retain });
     this.ctx.countPublish();
     // Terminal requests leave the active map first, then the array is republished.
     if (isTerminalRequestState(status.status)) {
@@ -144,5 +146,6 @@ export class RequestServer {
     }
     await this.ctx.session.publishResource(
       this.ctx.ref, 'activeRequestsStatus', 'requestStatusArray', [...this.activeStatuses.values()]);
+    this.ctx.countPublish();
   }
 }

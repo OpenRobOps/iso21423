@@ -88,9 +88,15 @@ describe('acceptRequests substrate', () => {
     await handle.acceptRequests(RequestAcceptanceFilter.all(), (req) => void req.reject('REJECTED'));
     await inject(broker, body());
     await flush();
-    const last = broker.messagesOn(statusTopic).at(-1)!.payload.toString();
+    const last = JSON.parse(broker.messagesOn(statusTopic).at(-1)!.payload.toString()) as {
+      status: string; detailStatuses: Array<{ status: { code: string; reason?: string } }>;
+    };
     expect(statuses(broker)).toEqual(['RECEIVED', 'ABORTED']);
-    expect(last).toContain('REJECTED');
+    expect(last.status).toBe('ABORTED');
+    // The wire-visible detail cascades to the request's terminal state too — no live detail left
+    // dangling under a dead request.
+    expect(last.detailStatuses[0]!.status.code).toBe('ABORTED');
+    expect(last.detailStatuses[0]!.status.reason).toBe('REJECTED');
   });
 
   it('rejects illegal transitions locally (Figure C.3)', async () => {

@@ -57,6 +57,9 @@ export class IncomingRequest {
     if (!lifecycle || !entry) {
       throw new IllegalTransition(`no request detail at index ${update.index}`);
     }
+    // A cascade (see cascadeDetails below) may already have legally advanced this detail to
+    // `update.status` — an explicit call agreeing with that is accepted as a no-op, never
+    // re-thrown as illegal; only a genuine mismatch goes through the FSM guard.
     if (lifecycle.state !== update.status) lifecycle.transition(update.status);
     entry.status = {
       code: update.status,
@@ -86,15 +89,21 @@ export class IncomingRequest {
 
   // ponytail: a request-level transition implies at least that much progress on every detail
   // still in flight — an app that only calls accept()/updateStatus()/complete() and never
-  // updateDetailStatus() for a given detail shouldn't leave it stuck at RECEIVED. Details already
-  // at or past `to`, already terminal, or for which `to` has no detail-level equivalent (RECOVERY)
-  // are left untouched; explicit updateDetailStatus() calls after this are then no-ops state-wise.
+  // updateDetailStatus() for a given detail shouldn't leave it stuck at RECEIVED (or, worse,
+  // publish a dead request with a still-live detail underneath it). Details already at or past
+  // `to`, already terminal, or for which `to` has no detail-level equivalent (RECOVERY) are left
+  // untouched; explicit updateDetailStatus() calls after this are then no-ops state-wise. Mirrors
+  // onto the wire-visible #detailStatuses entry too (preserving any reason/message already set),
+  // not just the internal DetailLifecycle guard.
   private cascadeDetails(to: RequestState): void {
     const target = to as unknown as DetailState;
-    for (const lifecycle of this.#details) {
-      if (lifecycle.isTerminal() || lifecycle.state === target) continue;
-      if (lifecycle.canTransition(target)) lifecycle.transition(target);
-    }
+    this.#details.forEach((lifecycle, i) => {
+      if (lifecycle.isTerminal() || lifecycle.state === target) return;
+      if (!lifecycle.canTransition(target)) return;
+      lifecycle.transition(target);
+      const entry = this.#detailStatuses[i]!;
+      entry.status = { ...entry.status, code: target };
+    });
   }
 
   private async emit(reason?: StatusReason, message?: string): Promise<void> {
