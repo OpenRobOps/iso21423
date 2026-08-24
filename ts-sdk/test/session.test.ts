@@ -97,6 +97,35 @@ describe('subscribeResource', () => {
     await expect(s.subscribeResource({}, 'status', 'entityStatus', () => {}))
       .rejects.toThrow(AuthorizationDenied);
   });
+
+  it('honors per-subscription entity filters', async () => {
+    const broker = new MemoryBroker();
+    const pub = await connect(broker);
+    const imrSub = await connect(broker);
+    const imrfmSub = await connect(broker);
+    const imrHandler = vi.fn();
+    const imrfmHandler = vi.fn();
+    await imrSub.subscribeResource({ entityType: 'IMR' }, 'status', 'entityStatus', imrHandler);
+    await imrfmSub.subscribeResource({ entityType: 'IMRFM' }, 'status', 'entityStatus', imrfmHandler);
+    await pub.publishResource(IMR, 'status', 'entityStatus', status(['IDLE']));
+    await new Promise((r) => setImmediate(r));
+    expect(imrHandler).toHaveBeenCalledOnce();
+    expect(imrfmHandler).not.toHaveBeenCalled();
+  });
+
+  it('kind:null passes raw payload text to handler without parsing', async () => {
+    const broker = new MemoryBroker();
+    const sub = await connect(broker);
+    const handler = vi.fn();
+    await sub.subscribeResource({}, 'status', null, handler);
+    const rogue = broker.createTransport();
+    await rogue.connect({ clientId: 'rogue', cleanSession: false, keepalive: 60 });
+    const jsonPayload = '{"entityId":"123","timestamp":"2025-01-01T00:00:00.000Z","states":["IDLE"]}';
+    await rogue.publish(STATUS_TOPIC, jsonPayload, { qos: 1, retain: false });
+    await new Promise((r) => setImmediate(r));
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0]![0]).toBe(jsonPayload);
+  });
 });
 
 describe('reconnect and close', () => {

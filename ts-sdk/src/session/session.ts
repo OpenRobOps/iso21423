@@ -2,7 +2,7 @@ import type { MqttTransport, ConnectionState } from './transport.js';
 import { RateGate } from './rateGate.js';
 import { RESOURCE_CONFIG } from '../topics/resources.js';
 import {
-  topicFor, disconnectionTopic, parseTopic, type EntityRef,
+  topicFor, disconnectionTopic, parseTopic, topicFilterMatches, type EntityRef,
 } from '../topics/topics.js';
 import { ROOT_NAMESPACE, LOST_CONNECTION_STATE } from '../types/constants.js';
 import { nowTimestamp } from '../types/common.js';
@@ -30,6 +30,7 @@ export interface ValidationWarningEvent {
 type SessionEvents = {
   connection: (s: ConnectionState) => void;
   'validation-warning': (w: ValidationWarningEvent) => void;
+  error: (err: unknown) => void;
 };
 
 interface ResourceSub {
@@ -44,7 +45,7 @@ export class Iso21423Session {
   private rateGates = new Map<string, RateGate>();
   private resourceSubs: ResourceSub[] = [];
   private listeners: { [K in keyof SessionEvents]: Array<SessionEvents[K]> } = {
-    connection: [], 'validation-warning': [],
+    connection: [], 'validation-warning': [], error: [],
   };
   private wasConnected = false;
 
@@ -100,13 +101,18 @@ export class Iso21423Session {
         this.rateGates.set(topic, gate);
       }
       gate.offer(body, (b) => {
-        void this.transport.publish(topic, b, { qos: config.qos, retain: false });
+        this.transport.publish(topic, b, { qos: config.qos, retain: false })
+          .catch((err) => this.emitError(err));
       });
       return;
     }
     await this.transport.publish(topic, body, { qos: config.qos, retain: false });
   }
 
+  /**
+   * Subscribe to a resource topic with optional validation.
+   * When kind is null, handler receives raw payload text without parsing or validation.
+   */
   async subscribeResource(
     filter: { entityType?: string; entityUuid?: string },
     resource: string,
@@ -122,19 +128,15 @@ export class Iso21423Session {
     }
     const sub: ResourceSub = { filter: topicFilter, resource, kind, handler };
     this.resourceSubs.push(sub);
+    const cleanup = async () => {
+      this.resourceSubs = this.resourceSubs.filter((s) => s !== sub);
+      if (!this.resourceSubs.some((s) => s.filter === topicFilter)) {
+        await this.transport.unsubscribe(topicFilter);
+      }
+    };
     return {
-      unsubscribe: async () => {
-        this.resourceSubs = this.resourceSubs.filter((s) => s !== sub);
-        if (!this.resourceSubs.some((s) => s.filter === topicFilter)) {
-          await this.transport.unsubscribe(topicFilter);
-        }
-      },
-      [Symbol.asyncDispose]: async () => {
-        this.resourceSubs = this.resourceSubs.filter((s) => s !== sub);
-        if (!this.resourceSubs.some((s) => s.filter === topicFilter)) {
-          await this.transport.unsubscribe(topicFilter);
-        }
-      },
+      unsubscribe: cleanup,
+      [Symbol.asyncDispose]: cleanup,
     };
   }
 
@@ -164,6 +166,7 @@ export class Iso21423Session {
     if (!parsed) return;
     for (const sub of this.resourceSubs) {
       if (parsed.resource !== sub.resource) continue;
+      if (!topicFilterMatches(sub.filter, topic)) continue;
       const meta = { topic, entityType: parsed.entityType, entityUuid: parsed.entityUuid };
       const text = payload.toString();
       if (!sub.kind) {
@@ -191,7 +194,8 @@ export class Iso21423Session {
     if (s === 'connected' && this.wasConnected) {
       // Reconnect: republish owned retained resources (broker may have lost them).
       for (const [topic, { payload, qos }] of this.retainedOwned) {
-        void this.transport.publish(topic, payload, { qos, retain: true });
+        this.transport.publish(topic, payload, { qos, retain: true })
+          .catch((err) => this.emitError(err));
       }
     }
     if (s === 'connected') this.wasConnected = true;
@@ -199,5 +203,14 @@ export class Iso21423Session {
 
   private emitWarning(w: ValidationWarningEvent): void {
     for (const cb of this.listeners['validation-warning']) cb(w);
+  }
+
+  private emitError(err: unknown): void {
+    const errorListeners = this.listeners.error;
+    if (errorListeners.length > 0) {
+      for (const cb of errorListeners) cb(err);
+    } else {
+      console.error('[Iso21423Session] async publish failed:', err);
+    }
   }
 }
