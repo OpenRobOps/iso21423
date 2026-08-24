@@ -3,10 +3,19 @@ import { IllegalTransition } from '../errors.js';
 
 /** Figure C.3 — request message state transitions. */
 export const REQUEST_TRANSITIONS: Record<RequestState, readonly RequestState[]> = {
-  RECEIVED: ['ACCEPTED', 'CANCELED', 'ABORTED'], // NP-2: disputed vs shared interaction model (Figure C.3 final artwork may differ)
-  ACCEPTED: ['EXECUTING', 'CANCELED', 'ABORTED', 'RECOVERY'], // NP-2: disputed vs shared interaction model (Figure C.3 final artwork may differ)
+  RECEIVED: [
+    'ACCEPTED',
+    'CANCELED', // NP-2: RECEIVED→CANCELED disputed vs shared interaction model (Figure C.3 final artwork may differ)
+    'ABORTED',
+  ],
+  ACCEPTED: [
+    'EXECUTING',
+    'CANCELED',
+    'ABORTED', // NP-2: ACCEPTED→ABORTED disputed vs shared interaction model (Figure C.3 final artwork may differ)
+    'RECOVERY', // NP-2: ACCEPTED→RECOVERY disputed vs shared interaction model (Figure C.3 final artwork may differ)
+  ],
   EXECUTING: ['SUCCEEDED', 'CANCELED', 'ABORTED', 'RECOVERY'],
-  RECOVERY: ['CANCELED', 'ABORTED'], // NP-2: disputed vs shared interaction model (Figure C.3 final artwork may differ)
+  RECOVERY: ['CANCELED', 'ABORTED'], // NP-2: no RECOVERY→SUCCEEDED (disputed vs shared interaction model, Figure C.3 final artwork may differ)
   CANCELED: [],
   SUCCEEDED: [],
   ABORTED: [],
@@ -35,7 +44,7 @@ class Lifecycle<S extends string> {
     return this.#state;
   }
   canTransition(to: S): boolean {
-    return (this.table[this.#state] as readonly S[]).includes(to);
+    return this.table[this.#state].includes(to);
   }
   transition(to: S): void {
     if (!this.canTransition(to)) {
