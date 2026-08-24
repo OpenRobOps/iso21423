@@ -68,26 +68,43 @@ class MqttAdapter implements MqttTransport {
 
     // Local settled flag ensures onConnect/onError fires at most once per promise
     let settled = false;
-    await new Promise<void>((resolve, reject) => {
-      const onConnect = () => {
-        if (settled) return;
-        settled = true;
-        this.client = client;
-        this.emitState('connected');
-        resolve();
-      };
-      const onError = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        // Clean up owned clients (createMqttTransport path)
-        if (this.ownsClient) {
-          client.endAsync(true).catch(() => {}); // fire-and-forget
-        }
-        reject(new BrokerUnavailable(`mqtt connect failed: ${err.message}`));
-      };
-      client.on('connect', onConnect as never);
-      client.on('error', onError as never);
-    });
+    const resolveReject = { resolve: null as unknown as (v: void) => void, reject: null as unknown as (r: unknown) => void };
+
+    const onConnect = (() => {
+      if (settled) return;
+      settled = true;
+      this.client = client;
+      this.emitState('connected');
+      resolveReject.resolve();
+    }) as (...args: never[]) => void;
+
+    const onError = ((err: Error) => {
+      if (settled) return;
+      settled = true;
+      // Clean up owned clients (createMqttTransport path)
+      if (this.ownsClient) {
+        client.endAsync(true).catch(() => {}); // fire-and-forget
+      }
+      resolveReject.reject(new BrokerUnavailable(`mqtt connect failed: ${err.message}`));
+    }) as (...args: never[]) => void;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        resolveReject.resolve = resolve;
+        resolveReject.reject = reject;
+        client.on('connect', onConnect);
+        client.on('error', onError);
+      });
+    } finally {
+      // Clean up settled listeners to prevent accumulation on retry
+      try {
+        const clientWithRemoval = client as { off?: (ev: string, cb: unknown) => void; removeListener?: (ev: string, cb: unknown) => void };
+        (clientWithRemoval.off ?? clientWithRemoval.removeListener)?.('connect', onConnect);
+        (clientWithRemoval.off ?? clientWithRemoval.removeListener)?.('error', onError);
+      } catch {
+        // Ignore cleanup errors (client might be disconnected/destroyed)
+      }
+    }
   }
 
   async publish(

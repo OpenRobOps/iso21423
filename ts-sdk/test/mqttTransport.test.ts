@@ -6,6 +6,7 @@ import {
 
 function fakeClient(will?: { topic: string }): MqttClientLike & {
   emit: (ev: string, ...args: unknown[]) => void;
+  off: (ev: string, cb: unknown) => void;
   published: Array<{ topic: string; payload: string; qos: number; retain: boolean }>;
   subscribed: Array<{ filter: string; qos: number }>;
   unsubscribed: string[];
@@ -25,6 +26,13 @@ function fakeClient(will?: { topic: string }): MqttClientLike & {
       const list = handlers.get(ev) ?? [];
       list.push(cb);
       handlers.set(ev, list);
+    },
+    off(ev: string, cb: unknown) {
+      const list = handlers.get(ev);
+      if (list) {
+        const idx = list.indexOf(cb as (...a: unknown[]) => void);
+        if (idx >= 0) list.splice(idx, 1);
+      }
     },
     emit(ev: string, ...args: unknown[]) {
       for (const cb of handlers.get(ev) ?? []) cb(...args);
@@ -144,12 +152,14 @@ describe('wrapMqttClient', () => {
     const states: string[] = [];
     t.onConnectionState((s) => states.push(s));
     const p = t.connect(CONNECT);
+    // Force slow path: keep connected=false until async emit
+    await Promise.resolve();
     c.connected = true;
     c.emit('connect');
     await p;
     expect(states).toEqual(['connected']);
     // Emit error after successful connect — should not corrupt state
-    c.emit('error', new Error('broker error'));
+    c.emit('error', new Error('late broker error'));
     expect(states).toEqual(['connected']); // no extra state
     // Transport should still be usable
     await t.publish('/a/b', '{}', { qos: 1, retain: false });
