@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Iso21423Session, AuthorizationDenied } from '../src/index.js';
 import { MemoryBroker } from '../src/testing/index.js';
 
@@ -67,5 +67,35 @@ describe('session.publishTopic / subscribeTopic', () => {
     expect(broker.subscriptions().filter((x) => x.filter.endsWith('/status'))).toHaveLength(1);
     await b.unsubscribe();
     expect(broker.subscriptions().filter((x) => x.filter.endsWith('/status'))).toHaveLength(0);
+  });
+
+  it('redelivers the retained value to a second subscriber on the same filter', async () => {
+    const broker = new MemoryBroker();
+    const pub = await Iso21423Session.connect({ transport: broker.createTransport(), entity: IMR });
+    const sub = await Iso21423Session.connect({ transport: broker.createTransport(), entity: IMR });
+    const seenA: unknown[] = [];
+    const seenB: unknown[] = [];
+    await sub.subscribeTopic('/ISO_21423/v1/+/+/status', 'entityStatus', (m) => seenA.push(m));
+    await pub.publishResource(IMR, 'status', 'entityStatus', {
+      entityId: IMR.entityUuid, timestamp: '2025-04-08T12:34:56.789Z', states: ['IDLE'],
+    });
+    await flush();
+    // Late second listener on the same filter: a real broker redelivers the retained value.
+    await sub.subscribeTopic('/ISO_21423/v1/+/+/status', 'entityStatus', (m) => seenB.push(m));
+    await flush();
+    expect(seenB).toHaveLength(1); // A may have received the redelivery too; only B's delivery is asserted.
+  });
+
+  it('ignores an empty payload on a validated subscription: no handler call, no validation-warning', async () => {
+    const broker = new MemoryBroker();
+    const s = await Iso21423Session.connect({ transport: broker.createTransport(), entity: IMR });
+    const handler = vi.fn();
+    const warnings: unknown[] = [];
+    s.on('validation-warning', (w) => warnings.push(w));
+    await s.subscribeTopic('/ISO_21423/v1/+/+/status', 'entityStatus', handler);
+    await s.publishRaw(`/ISO_21423/v1/IMR/${IMR.entityUuid}/status`, '', { qos: 1, retain: true });
+    await flush();
+    expect(handler).not.toHaveBeenCalled();
+    expect(warnings).toHaveLength(0);
   });
 });

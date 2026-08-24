@@ -16,6 +16,9 @@ export function defaultStateDir(): string {
 /** Default store: one JSON map per state directory, written atomically. */
 export class FileSequenceStore implements SequenceStore {
   private readonly file: string;
+  // ponytail: in-process serialization only; use a per-file lock if multiple processes share ISO21423_STATE_DIR
+  #queue: Promise<void> = Promise.resolve();
+
   constructor(private readonly dir: string = defaultStateDir()) {
     this.file = join(this.dir, 'sequence.json');
   }
@@ -24,6 +27,8 @@ export class FileSequenceStore implements SequenceStore {
     try {
       return JSON.parse(await readFile(this.file, 'utf8')) as Record<string, number>;
     } catch {
+      // ponytail: corrupted/unreadable file resets seeds to empty; acceptable because
+      // SequenceCounter.open() re-reserves a fresh block above any ids already retained on the broker.
       return {};
     }
   }
@@ -32,7 +37,15 @@ export class FileSequenceStore implements SequenceStore {
     return (await this.read())[entityUuid];
   }
 
-  async save(entityUuid: Uuid, value: number): Promise<void> {
+  /** Queued so concurrent saves in one process read-modify-write the file one at a time. */
+  save(entityUuid: Uuid, value: number): Promise<void> {
+    const result = this.#queue.then(() => this.writeOne(entityUuid, value));
+    // A failed write must not wedge the queue: later saves still run, only this caller sees the error.
+    this.#queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async writeOne(entityUuid: Uuid, value: number): Promise<void> {
     const all = await this.read();
     all[entityUuid] = value;
     await mkdir(this.dir, { recursive: true });

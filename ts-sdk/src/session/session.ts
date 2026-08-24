@@ -52,7 +52,6 @@ export class Iso21423Session {
   private retainedOwned = new Map<string, { payload: string; qos: 0 | 1 | 2 }>();
   private rateGates = new Map<string, RateGate>();
   private topicSubs: TopicSub[] = [];
-  private subscribedFilters = new Map<string, 0 | 1 | 2>();
   private listeners: { [K in keyof SessionEvents]: Array<SessionEvents[K]> } = {
     connection: [], 'validation-warning': [], error: [],
   };
@@ -132,7 +131,11 @@ export class Iso21423Session {
     return RESOURCE_CONFIG[key]?.qos ?? 1;
   }
 
-  /** Live subscription count per filter drives the lazy unsubscribe (ND-17). */
+  /**
+   * Always issues a broker SUBSCRIBE (a real broker redelivers retained messages on every
+   * SUBSCRIBE, so a late second handler must see the current retained value); the broker-side
+   * unsubscribe still only fires once the last local listener on the filter leaves (ND-17).
+   */
   async subscribeTopic(
     topicFilter: string,
     kind: MessageKind | null,
@@ -140,20 +143,16 @@ export class Iso21423Session {
     opts: { qos?: 0 | 1 | 2 } = {},
   ): Promise<SessionSubscription> {
     const qos = opts.qos ?? this.qosForFilter(topicFilter);
-    if (!this.topicSubs.some((s) => s.filter === topicFilter)) {
-      const { granted } = await this.transport.subscribe(topicFilter, { qos });
-      if (!granted) {
-        throw new AuthorizationDenied(`subscription denied by broker: ${topicFilter}`, topicFilter);
-      }
+    const { granted } = await this.transport.subscribe(topicFilter, { qos });
+    if (!granted) {
+      throw new AuthorizationDenied(`subscription denied by broker: ${topicFilter}`, topicFilter);
     }
     const sub: TopicSub = { filter: topicFilter, kind, handler };
     this.topicSubs.push(sub);
-    this.subscribedFilters.set(topicFilter, qos);
     return {
       unsubscribe: async () => {
         this.topicSubs = this.topicSubs.filter((s) => s !== sub);
         if (!this.topicSubs.some((s) => s.filter === topicFilter)) {
-          this.subscribedFilters.delete(topicFilter);
           await this.transport.unsubscribe(topicFilter);
         }
       },

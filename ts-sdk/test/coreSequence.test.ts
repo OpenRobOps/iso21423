@@ -53,4 +53,14 @@ describe('FileSequenceStore', () => {
     const raw = JSON.parse(await readFile(join(dir, 'sequence.json'), 'utf8')) as Record<string, number>;
     expect(raw[U]).toBe(4242);
   });
+
+  it('serializes concurrent saves from different entities (no lost update)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'iso21423-seq-'));
+    const store = new FileSequenceStore(dir);
+    const V = '22222222-2222-4222-8222-222222222222';
+    await Promise.all([store.save(U, 111), store.save(V, 222)]);
+    const raw = JSON.parse(await readFile(join(dir, 'sequence.json'), 'utf8')) as Record<string, number>;
+    expect(raw[U]).toBe(111);
+    expect(raw[V]).toBe(222);
+  });
 });
