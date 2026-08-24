@@ -105,7 +105,7 @@
       }
     },
     "odometry": {
-      "type": "object", "required": ["timestamp", "pose"],
+      "type": "object", "required": ["timestamp", "pose", "velocity"],
       "properties": {
         "timestamp": { "$ref": "#/$defs/timestamp" },
         "pose": {

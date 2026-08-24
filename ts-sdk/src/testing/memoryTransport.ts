@@ -41,11 +41,7 @@ export class MemoryBroker {
       else this.retained.set(msg.topic, msg);
     }
     for (const c of this.clients) {
-      try {
-        c.deliver(msg);
-      } catch (err) {
-        console.error('[MemoryTransport] subscriber callback threw:', err);
-      }
+      c.deliver(msg); // deliver() isolates callback exceptions internally, never throws
     }
   }
 
