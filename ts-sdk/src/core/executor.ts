@@ -93,7 +93,10 @@ export class ActionExecutor {
     }
   }
 
-  /** Entry point called once a request is admitted (RequestServer step 6 fallback). */
+  /** Entry point called once a request is admitted (RequestServer step 6 fallback). The run stays
+   *  registered in `this.runs` (so a cancelRequest can still find it) until the request is fully
+   *  terminal — including through the RECOVERY phase (controller ruling: RECOVERY→CANCELED is
+   *  legal, so a cancel arriving mid-recovery must still resolve). */
   async run(incoming: IncomingRequest, entity: EntityHandle): Promise<void> {
     const request = incoming.request;
 
@@ -109,50 +112,64 @@ export class ActionExecutor {
     const key = this.runKey(request.source, request.sequenceId);
     const run: ActiveRun = { controller: new AbortController(), cancelRequested: false };
     this.runs.set(key, run);
-    let outcome: StepOutcome;
     try {
-      outcome = await this.runSequence(request.details, request, entity, run, true,
+      const outcome = await this.runSequence(request.details, request, entity, run, true, false,
         (index, patch) => incoming.updateDetailStatus({ index, ...patch }));
+
+      if (outcome.trigger === 'success') {
+        await incoming.complete({ status: 'SUCCEEDED' });
+        return;
+      }
+
+      let trigger = outcome.trigger;
+      let reason = outcome.reason;
+      let message = outcome.message;
+      if (request.recoveries && request.recoveries.length > 0) {
+        await incoming.enterRecovery(request.recoveries, reason);
+        // Controller ruling: recoveries are cleanup FOR the trigger, not a continuation of it —
+        // the recovery phase starts with fresh cancel tracking (a new AbortController, and
+        // cancelRequested reset) so only a *new* cancelRequest arriving during RECOVERY can stop
+        // it early; the cancel/abort that got us into recovery must not immediately truncate it.
+        run.controller = new AbortController();
+        run.cancelRequested = false;
+        const recoveryOutcome = await this.runSequence(
+          request.recoveries, request, entity, run, false, true,
+          (index, patch) => incoming.updateRecoveryStatus({ index, ...patch }));
+        if (recoveryOutcome.trigger !== 'success') {
+          // A new cancel during recovery reclassifies the final state to CANCELED even if the
+          // original trigger was a plain abort; a recovery detail's own failure does not
+          // reclassify a cancel-triggered run back to ABORTED (decision 8 unchanged).
+          if (recoveryOutcome.trigger === 'cancel') trigger = 'cancel';
+          reason = recoveryOutcome.reason ?? reason;
+          message = recoveryOutcome.message ?? message;
+        }
+      }
+
+      const finalStatus = trigger === 'cancel' ? 'CANCELED' : 'ABORTED';
+      await incoming.complete({ status: finalStatus, reason, message });
     } finally {
       this.runs.delete(key);
     }
-
-    if (outcome.trigger === 'success') {
-      await incoming.complete({ status: 'SUCCEEDED' });
-      return;
-    }
-
-    const trigger = outcome.trigger;
-    let { reason, message } = outcome;
-    if (request.recoveries && request.recoveries.length > 0) {
-      await incoming.enterRecovery(request.recoveries, reason);
-      const recoveryRun: ActiveRun = { controller: run.controller, cancelRequested: run.cancelRequested };
-      const recoveryOutcome = await this.runSequence(
-        request.recoveries, request, entity, recoveryRun, false,
-        (index, patch) => incoming.updateRecoveryStatus({ index, ...patch }));
-      if (recoveryOutcome.trigger !== 'success') {
-        reason = recoveryOutcome.reason ?? reason;
-        message = recoveryOutcome.message ?? message;
-      }
-    }
-
-    const finalStatus = trigger === 'cancel' ? 'CANCELED' : 'ABORTED';
-    await incoming.complete({ status: finalStatus, reason, message });
   }
 
   /** Runs one detail array (main details or recoveries) under the shared sequencing rules
-   *  (item 3), atomic protection (item 4) and outcome mapping (item 5). `allowSkipLastSuccess`
-   *  lets the caller rely on the request-level terminal cascade for the very last detail of a
-   *  clean success run (main details only — recoveryStatuses is never cascaded). */
+   *  (item 3), atomic protection (item 4) and outcome mapping (item 5).
+   *  - `allowSkipLastSuccess` lets the caller rely on the request-level terminal cascade for the
+   *    very last detail of a clean success run (main details only).
+   *  - `markRemainingCanceled`: recoveryStatuses is never cascaded by the request's terminal
+   *    transition (unlike detailStatuses), so when the sequence stops early the caller must ask
+   *    us to explicitly mark every not-yet-started item CANCELED (main details rely on the
+   *    cascade instead and pass false here). */
   private async runSequence(
     items: readonly RequestDetail[], request: Request, entity: EntityHandle,
-    run: ActiveRun, allowSkipLastSuccess: boolean,
+    run: ActiveRun, allowSkipLastSuccess: boolean, markRemainingCanceled: boolean,
     update: (index: number, patch: {
       status: DetailState; reason?: StatusReason; message?: string; properties?: Record<string, unknown>;
     }) => Promise<void>,
   ): Promise<StepOutcome> {
     const steps = groupSteps(items);
-    for (const group of steps) {
+    for (let s = 0; s < steps.length; s++) {
+      const group = steps[s]!;
       const results = await Promise.all(
         group.map((index) => this.runOneDetail(index, items[index]!, request, entity, run, update)));
       const batchHasAbort = results.some((r) => r.outcome === 'aborted');
@@ -171,6 +188,11 @@ export class ActionExecutor {
         }
       }
       if (batchHasAbort || cancelledNow) {
+        if (markRemainingCanceled) {
+          for (const index of steps.slice(s + 1).flat()) {
+            await update(index, { status: 'CANCELED' });
+          }
+        }
         const aborted = results.find((r) => r.outcome === 'aborted');
         return cancelledNow
           ? { trigger: 'cancel', reason: aborted?.reason, message: aborted?.message }

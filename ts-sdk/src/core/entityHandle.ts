@@ -219,7 +219,8 @@ export class EntityHandle {
       this.#executor = new ActionExecutor();
       if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
       this.#requestServer.setExecutor(this.#executor, this);
-      void this.#requestServer.ensureStarted().catch(() => {});
+      void this.#requestServer.ensureStarted()
+        .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
     }
     this.#executor.register(type, handler as ActionHandler, opts);
   }

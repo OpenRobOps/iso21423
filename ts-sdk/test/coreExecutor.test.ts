@@ -1,6 +1,6 @@
 // test/coreExecutor.test.ts
 import { describe, it, expect } from 'vitest';
-import { Iso21423Client, move, pauseImr } from '../src/index.js';
+import { Iso21423Client, cancelRequest, move, pauseImr, resumeImr } from '../src/index.js';
 import { MemoryBroker } from '../src/testing/index.js';
 
 const SRC = '42177726-26f7-4f5c-b735-a12a427bb96d';
@@ -172,6 +172,53 @@ describe('per-action executor (ND-11.1)', () => {
     expect(seq.at(-1)).toBe('ABORTED');
     expect(statusesFor(broker, req.requestUuid).at(-1)!.recoveryStatuses![0]!.status.code)
       .toBe('SUCCEEDED');
+  });
+
+  it('resolves a cancelRequest that arrives during RECOVERY and ends the original CANCELED', async () => {
+    const broker = new MemoryBroker();
+    const { robot, sender } = await pair(broker);
+    let releaseRecovery = () => {};
+    const held = new Promise<void>((r) => { releaseRecovery = r; });
+    robot.onRequest('move', async (_a, ctx) => ctx.aborted('GENERAL_FAILURE', 'wheel slip'));
+    robot.onRequest('pauseImr', async (_a, ctx) => { await held; return ctx.succeeded(); });
+    const req = await sender.sendRequest({
+      destination: DST, details: [move(target)], recoveries: [pauseImr()],
+    });
+    await flush(); // move aborts, request enters RECOVERY, pauseImr recovery handler is now stuck on `held`
+
+    const cancelReq = await sender.sendRequest({
+      destination: DST, requireCapability: false,
+      details: [cancelRequest({ source: SRC, requestId: req.sequenceId })],
+    });
+    const cancelStatus = await cancelReq.completion();
+    expect(cancelStatus.status).toBe('SUCCEEDED');
+
+    releaseRecovery();
+    await expect(req.completion()).rejects.toThrow(/CANCELED/);
+    expect(statusesFor(broker, req.requestUuid).at(-1)!.status).toBe('CANCELED');
+  });
+
+  it('runs every recovery detail after a mid-request cancel, not truncated by the trigger (fresh cancel tracking)', async () => {
+    const broker = new MemoryBroker();
+    const { robot, sender } = await pair(broker);
+    const ran: string[] = [];
+    robot.onRequest('move', async (_a, ctx) => {
+      await new Promise<void>((resolve) => ctx.signal.addEventListener('abort', () => resolve()));
+      return ctx.aborted('OK', 'canceled by request');
+    });
+    robot.onRequest('pauseImr', async (_a, ctx) => { ran.push('pause'); return ctx.succeeded(); });
+    robot.onRequest('resumeImr', async (_a, ctx) => { ran.push('resume'); return ctx.succeeded(); });
+    const req = await sender.sendRequest({
+      destination: DST, details: [move(target)], recoveries: [pauseImr(), resumeImr()],
+    });
+    await flush();
+    await req.cancel();
+    await expect(req.completion()).rejects.toThrow(/CANCELED/);
+    expect(ran).toEqual(['pause', 'resume']);
+    const last = statusesFor(broker, req.requestUuid).at(-1)!;
+    expect(last.status).toBe('CANCELED');
+    expect(last.recoveryStatuses![0]!.status.code).toBe('SUCCEEDED');
+    expect(last.recoveryStatuses![1]!.status.code).toBe('SUCCEEDED');
   });
 
   it('maps a thrown handler error to ABORTED + GENERAL_FAILURE', async () => {

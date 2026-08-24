@@ -273,7 +273,8 @@ export class RequestServer {
     // Task 7: low-level acceptRequests handlers win when their filter matches; otherwise, if any
     // onRequest handler is registered, the executor runs the request.
     if (this.executor && this.executor.executor.hasHandlers()) {
-      void this.executor.executor.run(req, this.executor.entity);
+      void this.executor.executor.run(req, this.executor.entity)
+        .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
       return;
     }
     this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
