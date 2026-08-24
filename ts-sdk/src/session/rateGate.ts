@@ -1,3 +1,5 @@
+import { Iso21423Error } from '../errors.js';
+
 /**
  * Latest-wins rate limiter for streaming telemetry (Table B.1 bounds).
  * Emits immediately when the minimum interval has elapsed; otherwise keeps
@@ -10,6 +12,9 @@ export class RateGate {
   private timer?: ReturnType<typeof setTimeout>;
 
   constructor(maxHz: number) {
+    if (!(maxHz > 0) || !Number.isFinite(maxHz)) {
+      throw new Iso21423Error(`RateGate requires a finite maxHz > 0, got ${maxHz}`);
+    }
     this.intervalMs = 1000 / maxHz;
   }
 

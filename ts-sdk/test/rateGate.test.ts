@@ -41,4 +41,12 @@ describe('RateGate', () => {
     vi.advanceTimersByTime(500);
     expect(out).toEqual([1]);
   });
+
+  it('throws on zero maxHz', () => {
+    expect(() => new RateGate(0)).toThrow(/maxHz/);
+  });
+
+  it('throws on negative maxHz', () => {
+    expect(() => new RateGate(-5)).toThrow(/maxHz/);
+  });
 });
