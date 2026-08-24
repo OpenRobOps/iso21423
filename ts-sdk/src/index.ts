@@ -6,3 +6,6 @@ export * from './topics/index.js';
 export * from './schema/index.js';
 export * from './geometry/index.js';
 export * from './requests/index.js';
+export type {
+  MqttTransport, TransportConnectOptions, TransportMessage, WillOptions, ConnectionState,
+} from './session/transport.js';
