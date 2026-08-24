@@ -51,7 +51,10 @@ describe('discover() — retained-identity catalog only (D-18)', () => {
     transport.dropConnection();
     await flush();
     expect(lost).toEqual([FLEET]);
-    expect(catalog.get(FLEET)!.lost).toBe(true);
+    // The fired LWT is stale once the transport auto-reconnects; the session clears its own
+    // disconnection topic on reconnect (spec §4-style stale clear), so the catalog un-marks it.
+    await flush();
+    expect(catalog.get(FLEET)!.lost).toBe(false);
   });
 
   it('drops entities whose identity is zero-byte cleared', async () => {

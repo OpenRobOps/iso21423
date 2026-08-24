@@ -41,7 +41,9 @@ describe('registration', () => {
     const c = await Iso21423Client.connect({ transport, sequenceStore: null });
     await c.registerSelfEntity(registration);
     transport.dropConnection();
-    await flush();
+    // Checked before any tick: the will fires synchronously inside dropConnection(), and
+    // MemoryTransport's auto-reconnect (next setImmediate) would otherwise immediately clear
+    // this same topic (the session's own stale-will-clear on reconnect).
     expect(broker.retainedOn(ns('IMR', IMR_UUID, 'disconnection'))?.toString())
       .toBe('{"states":["LOST_CONNECTION"]}');
   });
@@ -171,5 +173,15 @@ describe('observation', () => {
     expect(h.connection).toBe('connected');
     expect(h.entities.self).toEqual([IMR_UUID]);
     expect(h.counters.published).toBeGreaterThan(0);
+  });
+
+  it('close() unsubscribes tracked subscriptions and zeroes health().subscriptions', async () => {
+    const broker = new MemoryBroker();
+    const c = await client(broker);
+    await c.registerSelfEntity(registration);
+    await c.subscribeResource('status', EntityFilter.ofType('IMR'), () => {});
+    expect(c.health().subscriptions).toBeGreaterThan(0);
+    await c.close();
+    expect(c.health().subscriptions).toBe(0);
   });
 });

@@ -29,7 +29,9 @@ describe('connect conformance', () => {
     const transport = broker.createTransport();
     await Iso21423Session.connect({ transport, entity: IMR });
     transport.dropConnection();
-    await new Promise((r) => setImmediate(r));
+    // The will fires synchronously inside dropConnection() (broker.disconnected() -> route()).
+    // Checked before any tick: MemoryTransport's auto-reconnect (next setImmediate) would
+    // otherwise also run and immediately clear this same topic (the reconnect-clear fix below).
     expect(broker.retainedOn(DISC_TOPIC)?.toString()).toBe('{"states":["LOST_CONNECTION"]}');
   });
 });

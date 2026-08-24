@@ -64,11 +64,12 @@ export class Iso21423Session {
     private readonly transport: MqttTransport,
     readonly entity: EntityRef,
     private readonly validateOutbound: boolean,
+    private readonly armWill: boolean,
   ) {}
 
   static async connect(opts: SessionOptions): Promise<Iso21423Session> {
     const armWill = opts.armWill ?? true;
-    const session = new Iso21423Session(opts.transport, opts.entity, opts.validateOutbound ?? true);
+    const session = new Iso21423Session(opts.transport, opts.entity, opts.validateOutbound ?? true, armWill);
     opts.transport.onMessage((m) => session.dispatch(m.topic, m.payload));
     opts.transport.onConnectionState((s) => session.handleConnectionState(s));
     await opts.transport.connect({
@@ -266,6 +267,11 @@ export class Iso21423Session {
       for (const [topic, { payload, qos }] of this.retainedOwned) {
         this.transport.publish(topic, payload, { qos, retain: true })
           .catch((err) => this.emitError(err));
+      }
+      // The LWT we armed at connect time has now fired (stale): clear it, same as the
+      // stale-crash clear at initial connect (spec §4).
+      if (this.armWill) {
+        this.clearRetained(disconnectionTopic(this.entity)).catch((err) => this.emitError(err));
       }
     }
     if (s === 'connected') this.wasConnected = true;

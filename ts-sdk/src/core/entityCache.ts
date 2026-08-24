@@ -61,6 +61,14 @@ export class EntityCache implements EntityCatalog {
     this.listeners[event].push(cb);
   }
 
+  /** Removal path for `on()` — not part of the public `EntityCatalog` interface (D-18 consumers
+   *  never unsubscribe from discovery), but used internally so per-call listeners don't leak. */
+  off(event: 'entity' | 'lost' | 'gone', cb: (e: EntityCatalogEntry) => void): void {
+    const arr = this.listeners[event];
+    const i = arr.indexOf(cb);
+    if (i !== -1) arr.splice(i, 1);
+  }
+
   /** Destination entityType resolution for request topics (decision 2). */
   entityTypeOf(uuid: Uuid): string | undefined { return this.byUuid.get(uuid)?.entityType; }
 

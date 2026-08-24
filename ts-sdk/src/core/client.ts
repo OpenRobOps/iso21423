@@ -18,6 +18,13 @@ import type {
   ManagedEntityRegistration, RequestEvent, ResourceEvent, SecurityOptions,
 } from './types.js';
 
+// Lazy module-level singleton (brief: "a shared FileSequenceStore()") — two clients in one
+// process share the same write queue instead of racing separate ones against the same file.
+let sharedSequenceStore: FileSequenceStore | undefined;
+function defaultSequenceStore(): FileSequenceStore {
+  return sharedSequenceStore ??= new FileSequenceStore();
+}
+
 export interface ClientOptions {
   transport?: MqttTransport;
   url?: string;
@@ -74,7 +81,7 @@ export class Iso21423Client {
     this.security = opts.security;
     this.validateOutbound = opts.validateOutbound;
     this.sourceId = opts.sourceId;
-    this.sequenceStore = opts.sequenceStore === null ? null : (opts.sequenceStore ?? new FileSequenceStore());
+    this.sequenceStore = opts.sequenceStore === null ? null : (opts.sequenceStore ?? defaultSequenceStore());
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 5000;
   }
 
@@ -158,19 +165,22 @@ export class Iso21423Client {
     for (const entry of cache.entities()) {
       if (matches(entry)) handler(entry.identity);
     }
-    cache.on('entity', (entry) => {
+    const listener = (entry: EntityCatalogEntry): void => {
       if (!active || !matches(entry)) return;
       this.counters.received++;
       handler(entry.identity);
-    });
+    };
+    cache.on('entity', listener);
 
     const topicFilters = Object.freeze(filter.topicFiltersFor('identity'));
     const sub: Subscription = {
       topicFilters,
       get active() { return active; },
-      async unsubscribe() { active = false; }, // ponytail: EntityCache has no listener removal;
-      // soft-unsubscribe (gate delivery) is enough since nothing re-subscribes on the same filter.
-      async [Symbol.asyncDispose]() { active = false; },
+      async unsubscribe() {
+        active = false;
+        cache.off('entity', listener);
+      },
+      async [Symbol.asyncDispose]() { await sub.unsubscribe(); },
     };
     return this.trackSubscription(sub);
   }
@@ -377,13 +387,12 @@ export class Iso21423Client {
 
   private trackSubscription(sub: Subscription): Subscription {
     this.subscriptionCount += sub.topicFilters.length;
-    this.trackedSubs.add(sub);
     let counted = true;
     const wrapped: Subscription = {
       topicFilters: sub.topicFilters,
       get active() { return sub.active; },
       unsubscribe: async () => {
-        this.trackedSubs.delete(sub);
+        this.trackedSubs.delete(wrapped);
         await sub.unsubscribe();
         if (counted) {
           counted = false;
@@ -392,6 +401,9 @@ export class Iso21423Client {
       },
       [Symbol.asyncDispose]: async () => { await wrapped.unsubscribe(); },
     };
+    // Track the wrapped subscription (not the raw one) — close() calls unsubscribe() on every
+    // tracked entry, and only the wrapper's unsubscribe() does the counter/set bookkeeping.
+    this.trackedSubs.add(wrapped);
     return wrapped;
   }
 }
