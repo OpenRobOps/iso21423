@@ -5,4 +5,5 @@ export * from './sequence.js';
 export * from './types.js';
 export * from './entityCache.js';
 export * from './entityHandle.js';
+export * from './requestHandle.js';
 export * from './client.js';

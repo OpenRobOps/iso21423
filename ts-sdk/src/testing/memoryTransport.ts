@@ -34,6 +34,11 @@ export class MemoryBroker {
     return this.log.filter((m) => m.topic === topic);
   }
 
+  /** Every logged message whose topic starts with `prefix` (test convenience). */
+  messagesUnder(prefix: string): TransportMessage[] {
+    return this.log.filter((m) => m.topic.startsWith(prefix));
+  }
+
   route(msg: TransportMessage): void {
     this.log.push(msg);
     if (msg.retain) {

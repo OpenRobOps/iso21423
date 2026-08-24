@@ -10,9 +10,11 @@ import { Iso21423Error } from '../errors.js';
 import { SequenceCounter, FileSequenceStore, type SequenceStore } from './sequence.js';
 import { EntityCache, type EntityCatalog, type EntityCatalogEntry } from './entityCache.js';
 import { EntityHandle, type EntityContext } from './entityHandle.js';
+import { RequestHandle } from './requestHandle.js';
 import { EntityFilter, RequestFilter, RequestStatusFilter } from './filters.js';
 import { composeSubscription, type Subscription } from './subscription.js';
 import { messageKindFor, type ResourceKind } from './resources.js';
+import { cancelRequest } from '../types/actions.js';
 import type {
   ClientHealth, DiagnosticCode, DiagnosticEvent, EntityRegistration, ExecutionPolicy,
   ManagedEntityRegistration, RequestEvent, ResourceEvent, SecurityOptions,
@@ -65,6 +67,7 @@ export class Iso21423Client {
   private readonly selfEntities = new Map<Uuid, EntityHandle>();
   private readonly managedEntities = new Map<Uuid, EntityHandle[]>();
   private readonly trackedSubs = new Set<Subscription>();
+  private readonly inFlightRequests = new Set<RequestHandle>();
 
   private since?: Date;
   private lastConnectionChange?: Date;
@@ -108,7 +111,9 @@ export class Iso21423Client {
         'at connect time (P-4)');
     }
     const sequence = await this.openSequence(reg.entityUuid);
-    const handle = new EntityHandle(this.contextFor(ref, sequence), 'self', reg);
+    const { ctx, bindSelf } = this.contextFor(ref, sequence);
+    const handle = new EntityHandle(ctx, 'self', reg);
+    bindSelf(handle);
     await handle.publishIdentity(handle.identity());
     if (this.security?.selfCheck) await this.runSelfCheck(handle);
     this.selfEntities.set(reg.entityUuid, handle);
@@ -124,7 +129,9 @@ export class Iso21423Client {
     const entityType = reg.entityType ?? 'IMR';
     const ref: EntityRef = { entityType, entityUuid: reg.entityUuid };
     const sequence = await this.openSequence(reg.entityUuid);
-    const handle = new EntityHandle(this.contextFor(ref, sequence), 'managed', { ...reg, entityType });
+    const { ctx, bindSelf } = this.contextFor(ref, sequence);
+    const handle = new EntityHandle(ctx, 'managed', { ...reg, entityType });
+    bindSelf(handle);
     const identity = handle.identity();
     identity.capabilities.managedBy = managerUuid;
     await handle.publishIdentity(identity);
@@ -280,7 +287,7 @@ export class Iso21423Client {
         managed: [...this.managedEntities.values()].flat().map((h) => h.entityUuid),
       },
       subscriptions: this.subscriptionCount,
-      activeRequests: { sent: 0, serving: 0 }, // populated once Task 4 tracks in-flight requests
+      activeRequests: { sent: this.inFlightRequests.size, serving: 0 }, // serving: Task 6/7
       counters: { ...this.counters },
     };
   }
@@ -294,6 +301,7 @@ export class Iso21423Client {
     if (this.closed) return;
     this.closed = true;
     if (!this.sessionPromise) return; // never connected: no-op
+    this.failAllInFlight();
     await Promise.all([...this.trackedSubs].map((s) => s.unsubscribe().catch(() => {})));
     const session = await this.sessionPromise;
     const timeoutMs = opts?.timeout ?? 5000;
@@ -333,6 +341,8 @@ export class Iso21423Client {
     this.lastConnectionChange = this.since;
     session.on('connection', (s) => {
       this.lastConnectionChange = new Date();
+      // nodejs_api.md §12: an offline broker fails every in-flight request instead of hanging.
+      if (s === 'offline') this.failAllInFlight();
       for (const cb of this.listeners.connection) cb(s);
     });
     session.on('validation-warning', (w) => {
@@ -352,8 +362,16 @@ export class Iso21423Client {
     return SequenceCounter.open(entityUuid, store, () => this.diagnostic('sequence-store-unavailable'));
   }
 
-  private contextFor(ref: EntityRef, sequence: SequenceCounter): EntityContext {
-    return {
+  /**
+   * `bindSelf` must be called with the `EntityHandle` built from the returned `ctx`, right after
+   * construction — `sendCancel` re-enters `EntityHandle.sendRequest` (cancel = a new request,
+   * D-02) and `contextFor` necessarily runs before that `EntityHandle` exists.
+   */
+  private contextFor(
+    ref: EntityRef, sequence: SequenceCounter,
+  ): { ctx: EntityContext; bindSelf: (handle: EntityHandle) => void } {
+    const box: { handle?: EntityHandle } = {};
+    const ctx: EntityContext = {
       session: this.session!,
       ref,
       sequence,
@@ -361,7 +379,29 @@ export class Iso21423Client {
       diagnostic: (code, detail) => this.diagnostic(code, detail),
       countPublish: () => { this.counters.published++; },
       requestTimeoutMs: this.requestTimeoutMs,
+      sendCancel: async (handle, actionId) => {
+        const destRef = handle.internalDestRef();
+        await box.handle!.sendRequest({
+          destination: destRef.entityUuid,
+          destinationType: destRef.entityType,
+          details: [cancelRequest({
+            source: handle.sourceUuid, requestId: handle.sequenceId,
+            ...(actionId !== undefined ? { actionId } : {}),
+          })],
+          requireCapability: false,
+        });
+      },
+      trackInFlight: (handle) => {
+        this.inFlightRequests.add(handle);
+        const drop = () => { this.inFlightRequests.delete(handle); };
+        handle.completion().then(drop, drop);
+      },
     };
+    return { ctx, bindSelf: (handle) => { box.handle = handle; } };
+  }
+
+  private failAllInFlight(): void {
+    for (const handle of [...this.inFlightRequests]) handle.failFast();
   }
 
   /** Minimal identity-echo publish self-check (ND-15): confirms our own retained identity round-trips. */
