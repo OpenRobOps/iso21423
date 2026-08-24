@@ -14,6 +14,8 @@ export interface SessionOptions {
   entity: EntityRef;
   credentials?: { username?: string; password?: string };
   validateOutbound?: boolean;
+  /** Arm the B.4 Last Will at connect time. Default true; false for identity-less sessions (R1). */
+  armWill?: boolean;
 }
 
 /** Returned by `subscribeTopic` / `subscribeResource`: stop receiving on that filter. */
@@ -65,6 +67,7 @@ export class Iso21423Session {
   ) {}
 
   static async connect(opts: SessionOptions): Promise<Iso21423Session> {
+    const armWill = opts.armWill ?? true;
     const session = new Iso21423Session(opts.transport, opts.entity, opts.validateOutbound ?? true);
     opts.transport.onMessage((m) => session.dispatch(m.topic, m.payload));
     opts.transport.onConnectionState((s) => session.handleConnectionState(s));
@@ -74,16 +77,23 @@ export class Iso21423Session {
       keepalive: 60,
       username: opts.credentials?.username,
       password: opts.credentials?.password,
-      will: {
+      will: armWill ? {
         topic: disconnectionTopic(opts.entity),
         payload: JSON.stringify({ states: [LOST_CONNECTION_STATE] }),
         qos: 1,
         retain: true,
-      },
+      } : undefined,
     });
-    // Clear stale retained LOST_CONNECTION from a prior crash (spec §4).
-    await session.clearRetained(disconnectionTopic(opts.entity));
+    // Clear stale retained LOST_CONNECTION from a prior crash (spec §4). Skipped when no will was
+    // armed: an identity-less session never owns a disconnection topic, so there is nothing stale
+    // to clear (R1 — implementer's choice).
+    if (armWill) await session.clearRetained(disconnectionTopic(opts.entity));
     return session;
+  }
+
+  /** Passthrough so `/core` never rebuilds topics itself (Task 3 implementer note). */
+  topicFor(ref: EntityRef, resource: string): string {
+    return topicFor(ref, resource);
   }
 
   on<K extends keyof SessionEvents>(event: K, cb: SessionEvents[K]): void {
