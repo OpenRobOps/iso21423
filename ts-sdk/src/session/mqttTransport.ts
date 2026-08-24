@@ -27,12 +27,14 @@ export interface MqttTransportOptions {
 class MqttAdapter implements MqttTransport {
   private client?: MqttClientLike;
   private ended = false;
+  private wired = false;
   private readonly messageCbs: Array<(m: TransportMessage) => void> = [];
   private readonly stateCbs: Array<(s: ConnectionState) => void> = [];
 
   constructor(
     private readonly acquire: (opts: TransportConnectOptions) => Promise<MqttClientLike>,
     private readonly checkWill: boolean,
+    private readonly ownsClient: boolean,
   ) {}
 
   async connect(opts: TransportConnectOptions): Promise<void> {
@@ -43,24 +45,46 @@ class MqttAdapter implements MqttTransport {
         `payload: '${opts.will.payload}', qos: ${opts.will.qos}, retain: ${opts.will.retain} } (P-4)`,
       );
     }
-    this.client = client;
-    client.on('message', ((topic: string, payload: Buffer, packet: { qos?: 0 | 1 | 2; retain?: boolean }) => {
-      const msg: TransportMessage = {
-        topic, payload, qos: packet?.qos ?? 0, retain: packet?.retain ?? false,
-      };
-      for (const cb of this.messageCbs) cb(msg);
-    }) as never);
-    client.on('reconnect', (() => this.emitState('reconnecting')) as never);
-    client.on('offline', (() => this.emitState('offline')) as never);
-    client.on('close', (() => this.emitState('closed')) as never);
+
+    // Wire message/state listeners only once per adapter
+    if (!this.wired) {
+      this.wired = true;
+      client.on('message', ((topic: string, payload: Buffer, packet: { qos?: 0 | 1 | 2; retain?: boolean }) => {
+        const msg: TransportMessage = {
+          topic, payload, qos: packet?.qos ?? 0, retain: packet?.retain ?? false,
+        };
+        for (const cb of this.messageCbs) cb(msg);
+      }) as never);
+      client.on('reconnect', (() => this.emitState('reconnecting')) as never);
+      client.on('offline', (() => this.emitState('offline')) as never);
+      client.on('close', (() => this.emitState('closed')) as never);
+    }
 
     if (client.connected) {
+      this.client = client;
       this.emitState('connected');
       return;
     }
+
+    // Local settled flag ensures onConnect/onError fires at most once per promise
+    let settled = false;
     await new Promise<void>((resolve, reject) => {
-      const onConnect = () => { this.emitState('connected'); resolve(); };
-      const onError = (err: Error) => reject(new BrokerUnavailable(`mqtt connect failed: ${err.message}`));
+      const onConnect = () => {
+        if (settled) return;
+        settled = true;
+        this.client = client;
+        this.emitState('connected');
+        resolve();
+      };
+      const onError = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        // Clean up owned clients (createMqttTransport path)
+        if (this.ownsClient) {
+          client.endAsync(true).catch(() => {}); // fire-and-forget
+        }
+        reject(new BrokerUnavailable(`mqtt connect failed: ${err.message}`));
+      };
       client.on('connect', onConnect as never);
       client.on('error', onError as never);
     });
@@ -109,7 +133,7 @@ class MqttAdapter implements MqttTransport {
 
 /** Adapt a caller-constructed mqtt client (D-07). Its will must match the SDK's (P-4). */
 export function wrapMqttClient(client: MqttClientLike): MqttTransport {
-  return new MqttAdapter(async () => client, true);
+  return new MqttAdapter(async () => client, true, false);
 }
 
 /**
@@ -136,5 +160,5 @@ export function createMqttTransport(url: string, opts: MqttTransportOptions = {}
       reconnectPeriod: opts.reconnectPeriod,
       will: connectOpts.will,
     });
-  }, false);
+  }, false, true);
 }

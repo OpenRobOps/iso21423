@@ -123,6 +123,68 @@ describe('wrapMqttClient', () => {
     expect(c.ended).toBe(true);
     await expect(t.publish('/a/b', 'x', { qos: 1, retain: false })).rejects.toThrow(BrokerUnavailable);
   });
+
+  it('resolves connect() asynchronously via event (not fast path)', async () => {
+    const c = fakeClient({ topic: CONNECT.will.topic });
+    const t = wrapMqttClient(c);
+    const states: string[] = [];
+    t.onConnectionState((s) => states.push(s));
+    const p = t.connect(CONNECT);
+    // Keep connected=false; only emit 'connect' after yielding to event loop
+    await Promise.resolve();
+    c.connected = true;
+    c.emit('connect');
+    await p;
+    expect(states).toEqual(['connected']);
+  });
+
+  it('handles error after successful connect without state corruption', async () => {
+    const c = fakeClient({ topic: CONNECT.will.topic });
+    const t = wrapMqttClient(c);
+    const states: string[] = [];
+    t.onConnectionState((s) => states.push(s));
+    const p = t.connect(CONNECT);
+    c.connected = true;
+    c.emit('connect');
+    await p;
+    expect(states).toEqual(['connected']);
+    // Emit error after successful connect — should not corrupt state
+    c.emit('error', new Error('broker error'));
+    expect(states).toEqual(['connected']); // no extra state
+    // Transport should still be usable
+    await t.publish('/a/b', '{}', { qos: 1, retain: false });
+    expect(c.published.length).toBe(1);
+  });
+
+  it('deduplicates listeners on repeated connect()', async () => {
+    const c = fakeClient({ topic: CONNECT.will.topic });
+    const t = wrapMqttClient(c);
+    const seen: string[] = [];
+    t.onMessage((m) => seen.push(m.topic));
+
+    // First connect
+    const p1 = t.connect(CONNECT);
+    c.connected = true;
+    c.emit('connect');
+    await p1;
+
+    // Reset connected, emit another message from first connect
+    c.connected = false;
+    c.emit('message', '/x', Buffer.from('x'), { qos: 0, retain: false });
+    expect(seen).toEqual(['/x']);
+
+    // Second connect on same adapter (asynchronous path)
+    seen.length = 0;
+    const p2 = t.connect(CONNECT);
+    await Promise.resolve();
+    c.connected = true;
+    c.emit('connect');
+    await p2;
+
+    // Emit message after second connect — should arrive exactly once despite listener duplication bug fix
+    c.emit('message', '/y', Buffer.from('y'), { qos: 0, retain: false });
+    expect(seen).toEqual(['/y']);
+  });
 });
 
 describe('createMqttTransport', () => {
