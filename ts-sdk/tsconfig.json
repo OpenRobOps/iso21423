@@ -10,7 +10,8 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
     "types": ["node"],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "lib": ["ES2022", "ESNext.Disposable"]
   },
   "include": ["src", "test"]
 }
