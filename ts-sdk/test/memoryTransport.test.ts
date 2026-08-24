@@ -93,3 +93,40 @@ describe('subscription denial (ACL simulation)', () => {
     expect((await t.subscribe('/ISO_21423/v1/+/+/identity', { qos: 1 })).granted).toBe(true);
   });
 });
+
+describe('reconnect and callback error handling', () => {
+  it('end() after dropConnection() stays closed (no dangling reconnect)', async () => {
+    const broker = new MemoryBroker();
+    const t = broker.createTransport();
+    const states: string[] = [];
+    t.onConnectionState((s) => states.push(s));
+    await t.connect(opts('t'));
+    t.dropConnection();
+    await t.end();
+    // emitted: connected (from connect), reconnecting (from drop), then closed (from end)
+    // should NOT emit a late 'connected' from the pending setImmediate
+    await new Promise((r) => setImmediate(r));
+    expect(states).toEqual(['connected', 'reconnecting', 'closed']);
+  });
+
+  it('throwing subscriber does not block delivery to other subscribers', async () => {
+    const broker = new MemoryBroker();
+    const t = broker.createTransport();
+    await t.connect(opts('t'));
+    const delivered: string[] = [];
+    let throwCount = 0;
+    t.onMessage(() => {
+      throwCount++;
+      if (throwCount === 1) throw new Error('first subscriber throws once');
+    });
+    t.onMessage((m) => {
+      delivered.push(m.topic);
+    });
+    await t.subscribe('/x', { qos: 0 });
+    await t.publish('/x', 'msg', { qos: 0, retain: false });
+    // both subscribers are called; first throws once, second still receives
+    await new Promise((r) => setImmediate(r));
+    expect(delivered).toEqual(['/x']);
+    expect(throwCount).toBe(1);
+  });
+});

@@ -22,6 +22,7 @@ export class MemoryBroker {
   }
 
   isDenied(filter: string): boolean {
+    // ponytail: exact-filter match only; make wildcard-aware if a test ever needs prefix denial
     return this.deniedFilters.includes(filter);
   }
 
@@ -39,7 +40,15 @@ export class MemoryBroker {
       if (msg.payload.length === 0) this.retained.delete(msg.topic);
       else this.retained.set(msg.topic, msg);
     }
-    for (const c of this.clients) c.deliver(msg);
+    for (const c of this.clients) {
+      try {
+        c.deliver(msg);
+      } catch (err) {
+        queueMicrotask(() => {
+          throw err;
+        });
+      }
+    }
   }
 
   deliverRetained(to: MemoryTransport, filter: string): void {
@@ -68,6 +77,7 @@ export class MemoryTransport implements MqttTransport {
   private messageCbs: Array<(m: TransportMessage) => void> = [];
   private stateCbs: Array<(s: ConnectionState) => void> = [];
   private connected = false;
+  private reconnectTimer: NodeJS.Immediate | null = null;
 
   constructor(private readonly broker: MemoryBroker) {}
 
@@ -109,27 +119,48 @@ export class MemoryTransport implements MqttTransport {
     if (!this.connected) return;
     const matched = viaFilter !== undefined
       || this.subs.some((s) => topicFilterMatches(s.filter, msg.topic));
-    if (matched) for (const cb of this.messageCbs) cb(msg);
+    if (matched) {
+      for (const cb of this.messageCbs) {
+        try {
+          cb(msg);
+        } catch (err) {
+          queueMicrotask(() => {
+            throw err;
+          });
+        }
+      }
+    }
   }
 
   /** Simulate ungraceful TCP loss: will fires, then auto-reconnect. */
   dropConnection(): void {
     this.connected = false;
+    if (this.reconnectTimer) clearImmediate(this.reconnectTimer);
     this.emitState('reconnecting');
     this.broker.disconnected(this, true);
-    setImmediate(() => {
+    this.reconnectTimer = setImmediate(() => {
+      this.reconnectTimer = null;
       this.connected = true;
       this.emitState('connected');
     });
   }
 
   async end(): Promise<void> {
+    if (this.reconnectTimer) clearImmediate(this.reconnectTimer);
     this.connected = false;
     this.broker.disconnected(this, false);
     this.emitState('closed');
   }
 
   private emitState(s: ConnectionState): void {
-    for (const cb of this.stateCbs) cb(s);
+    for (const cb of this.stateCbs) {
+      try {
+        cb(s);
+      } catch (err) {
+        queueMicrotask(() => {
+          throw err;
+        });
+      }
+    }
   }
 }
