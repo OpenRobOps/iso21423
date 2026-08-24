@@ -4,3 +4,4 @@ export * from './types/index.js';
 export * from './errors.js';
 export * from './topics/index.js';
 export * from './schema/index.js';
+export * from './geometry/index.js';
