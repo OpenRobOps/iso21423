@@ -1,29 +1,58 @@
-import type { IsoTimestamp, SoftwareVersion, SupportVendorContactInformation, Uuid } from './common.js';
-
-export type ResourceName = string;
+import type { Uuid, IsoTimestamp } from './common.js';
+import type { EntityType } from './constants.js';
+import type { Point } from './ccs.js';
 
 export interface Capabilities {
-  provides: ResourceName[];
+  provides: string[];
   accepts: { requests: string[] };
   manages?: Uuid[];
   managedBy?: Uuid;
 }
 
-export interface ImrfmDetails {
-  imrfmModel?: string;
-  imrfmName?: string;
+export interface SoftwareVersion { moduleName: string; moduleVersion: string }
+
+export interface AdditionalProperty { key: string; value: string }
+
+export interface SupportVendorContactInformation {
+  name: string; phone?: string; address?: string; email?: string;
+}
+
+export interface ImrDetails {
+  imrModel: string;
+  imrSerialNumber: string;
+  imrName?: string;                     // schema/example field, spec §3.1 (B2 in defects doc)
+  imrFootprint: Point[];
+  imrWorkingArea: Point[];
+  imrHeight: number;
   softwareVersions: SoftwareVersion[];
-  supportVendorContactInformation?: SupportVendorContactInformation;
-  supportUrl?: string;
+  priority?: number;
+  ratedSpeed?: number;
+  supportedChargerTypes?: string[];
+  supportVendorName?: string;
+  supportVendorContactInformation?: string;
+  visualThumbnailImage?: string;
+  ratedLoad?: number;
+  supportURL?: string;
+  imrDocumentation?: string;
+  payloadTypes?: string[];
+  batteryType?: string;
+  additionalProperties?: AdditionalProperty[];
+}
+
+export interface ImrfmDetails {
+  softwareVersions: SoftwareVersion[];
+  imrfmModel?: string;
+  supportVendorContactInf?: SupportVendorContactInformation;
+  supportURL?: string;
   imrfmDocumentation?: string;
 }
 
 export interface EntityIdentity {
   id: Uuid;
   timestamp: IsoTimestamp;
-  entityType: 'IMR' | 'IMRFM' | string;
+  entityType: EntityType;
   manufacturerName: string;
   iso21423Version?: string;
   capabilities: Capabilities;
-  details: ImrfmDetails | Record<string, unknown>;
+  details: ImrDetails | ImrfmDetails | Record<string, unknown>;
 }
