@@ -18,6 +18,10 @@ import type { SequenceCounter } from './sequence.js';
 import type { EntityCache } from './entityCache.js';
 import type { DiagnosticCode } from './types.js';
 import { RequestHandle } from './requestHandle.js';
+import { RequestServer } from './requestServer.js';
+import type { IncomingRequest } from './incomingRequest.js';
+import type { RequestAcceptanceFilter } from './filters.js';
+import { composeSubscription, type Subscription } from './subscription.js';
 
 /** Internal seam shared by the publication, requester and executor mixins (Tasks 4–7). */
 export interface EntityContext {
@@ -42,6 +46,7 @@ const RETAINED_RESOURCES = [
 export class EntityHandle {
   #identity: EntityIdentity;
   #states: OperatingState[] = [];
+  #requestServer?: RequestServer;
 
   /** @internal — constructed by Iso21423Client.registerSelfEntity/registerManagedEntity. */
   constructor(
@@ -154,6 +159,24 @@ export class EntityHandle {
       requestTopic(destRef, requestUuid), 'request', request, { qos: 2, retain: true });
     this.ctx.countPublish();
     return handle;
+  }
+
+  /** Registers a low-level request handler (Task 5); Tasks 6/7 add admission and the executor
+   *  hand-off on top of the same `RequestServer`. */
+  async acceptRequests(
+    filter: RequestAcceptanceFilter, handler: (req: IncomingRequest) => void,
+  ): Promise<Subscription> {
+    if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
+    const server = this.#requestServer;
+    await server.ensureStarted();
+    const deregister = server.register(filter, handler);
+    const requestFilterTopic = `${this.ctx.session.topicFor(this.ctx.ref, 'request')}/+`;
+    return composeSubscription([requestFilterTopic], [{
+      unsubscribe: async () => {
+        deregister();
+        if (server.handlerCount === 0) await server.teardown();
+      },
+    }]);
   }
 
   /**

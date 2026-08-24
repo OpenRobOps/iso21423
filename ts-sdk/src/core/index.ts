@@ -6,4 +6,6 @@ export * from './types.js';
 export * from './entityCache.js';
 export * from './entityHandle.js';
 export * from './requestHandle.js';
+export * from './incomingRequest.js';
+export * from './requestServer.js';
 export * from './client.js';

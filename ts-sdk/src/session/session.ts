@@ -202,6 +202,12 @@ export class Iso21423Session {
     return { unsubscribe: sub.unsubscribe, [Symbol.asyncDispose]: sub.unsubscribe };
   }
 
+  /** For subscribers that opt out of schema routing (kind: null) but still want to surface a
+   *  malformed payload as the usual 'validation-warning' event (D-13's RequestServer). */
+  reportValidationWarning(w: ValidationWarningEvent): void {
+    this.emitWarning(w);
+  }
+
   async publishRaw(topic: string, payload: string, opts: { qos: 0 | 1 | 2; retain: boolean }): Promise<void> {
     await this.transport.publish(topic, payload, opts);
   }
