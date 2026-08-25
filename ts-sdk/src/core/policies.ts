@@ -2,6 +2,10 @@ import type { Uuid } from '../types/common.js';
 import type { Request, RequestStatus } from '../types/requests.js';
 import type { StatusReason } from './types.js';
 
+/** Identifies one in-flight request by its ORIGINAL sender (Uuid) and that sender's own
+ *  sequenceId — the same (source, sequenceId) pair a cancelRequest names (Table C.4, D-02). Never
+ *  the serving entity's own uuid: two different senders may coincidentally share a sequenceId, so
+ *  the sender is what actually disambiguates. */
 export interface RequestKey { source: Uuid; sequenceId: number }
 
 export type AdmissionDecision =
@@ -22,7 +26,10 @@ export interface ExecutionPolicy {
 /** Table C.1: 0 = highest … 255 = lowest; an omitted priority is mid-scale. */
 export const DEFAULT_PRIORITY = 100;
 const priorityOf = (r: { priority?: number }): number => r.priority ?? DEFAULT_PRIORITY;
-const keyOf = (s: RequestStatus): RequestKey => ({ source: s.source, sequenceId: s.requestSequenceId });
+// `s.source` is the SERVING entity's own uuid (constant across every active request on this
+// handle) — the sender that a cancel/preempt must name is `s.destination` (Request.source
+// mirrored back, decision 5).
+const keyOf = (s: RequestStatus): RequestKey => ({ source: s.destination, sequenceId: s.requestSequenceId });
 
 export const policies = {
   abortNew(): ExecutionPolicy {

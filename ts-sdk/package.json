@@ -19,6 +19,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run test/integration",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

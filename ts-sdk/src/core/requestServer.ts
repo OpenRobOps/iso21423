@@ -281,7 +281,10 @@ export class RequestServer {
             // admitted-only: the keys came from the admission view, and a buffered request must
             // never be cancelled by a preemption aimed at running work.
             if (!data.admitted) continue;
-            if (data.status.source === key.source && data.status.requestSequenceId === key.sequenceId) {
+            // key.source names the ORIGINAL sender (RequestKey convention, policies.ts) —
+            // data.status.destination is that same sender mirrored back onto this request's
+            // own status, not data.status.source (this handle's own uuid, constant here).
+            if (data.status.destination === key.source && data.status.requestSequenceId === key.sequenceId) {
               // Task 7 seam: an executor-run request owns its own completion once its
               // AbortSignal fires (run() detects cancelRequested and ends it CANCELED itself);
               // ending it directly here too would race a second, illegal transition. A

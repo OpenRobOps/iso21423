@@ -49,8 +49,11 @@ describe('C.2.2 presets (D-17)', () => {
 
   it('priority preempts strictly lower-priority work and buffers otherwise', () => {
     const p = policies.priority();
+    // The preempt key names the ORIGINAL sender (A), not the serving robot (B) — see keyOf
+    // (policies.ts): a preempt/cancel key must disambiguate by sender, since two different
+    // senders could otherwise share a sequenceId.
     expect(p.admit(req({ priority: 10 }), [active(1, 100)]))
-      .toEqual({ action: 'preempt', preempt: [{ source: B, sequenceId: 1 }] });
+      .toEqual({ action: 'preempt', preempt: [{ source: A, sequenceId: 1 }] });
     expect(p.admit(req({ priority: 100 }), [active(1, 10)])).toEqual({ action: 'buffer' });
     expect(p.admit(req(), [])).toEqual({ action: 'accept' });
   });
