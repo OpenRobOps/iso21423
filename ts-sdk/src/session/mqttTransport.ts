@@ -58,9 +58,18 @@ class MqttAdapter implements MqttTransport {
       client.on('reconnect', (() => this.emitState('reconnecting')) as never);
       client.on('offline', (() => this.emitState('offline')) as never);
       client.on('close', (() => this.emitState('closed')) as never);
+      // Persistent 'connect' listener: mqtt.js re-emits 'connect' after every auto-reconnect, not
+      // just the initial handshake. This is the ONLY place that emits 'connected' — the initial
+      // connect's own onConnect (below) fires after this one (registered later, same event) and
+      // only settles the promise/records `this.client`, so each 'connect' event still produces
+      // exactly one 'connected' state, initial or reconnect alike.
+      client.on('connect', (() => this.emitState('connected')) as never);
     }
 
     if (client.connected) {
+      // Already connected (e.g. a caller-constructed client via wrapMqttClient): no 'connect'
+      // event will fire for this state, so emit it directly — the persistent listener above only
+      // covers events, not the already-there case.
       this.client = client;
       this.emitState('connected');
       return;
@@ -73,8 +82,9 @@ class MqttAdapter implements MqttTransport {
     const onConnect = (() => {
       if (settled) return;
       settled = true;
+      // 'connected' itself is emitted by the persistent listener registered above (same event) —
+      // this only needs to record the live client and settle the connect() promise.
       this.client = client;
-      this.emitState('connected');
       resolveReject.resolve();
     }) as (...args: never[]) => void;
 

@@ -18,7 +18,10 @@ export class RetainedRequestJanitor {
   note(requestTopic: string): void {
     const timer = setTimeout(() => {
       this.timers.delete(timer);
-      void this.session.clearRetained(requestTopic).then(() => this.onCleared(requestTopic));
+      void this.session.clearRetained(requestTopic).then(() => this.onCleared(requestTopic))
+        // Idempotent retry: the next note() (or the sender's own ND-10 clear) will catch it up,
+        // so a failed clear here is silently swallowed rather than an unhandled rejection.
+        .catch(() => {});
     }, this.graceMs);
     timer.unref?.();
     this.timers.add(timer);

@@ -166,6 +166,23 @@ describe('wrapMqttClient', () => {
     expect(c.published.length).toBe(1);
   });
 
+  it('re-emits connected after an mqtt.js auto-reconnect (close/reconnect/connect)', async () => {
+    const c = fakeClient({ topic: CONNECT.will.topic });
+    const t = wrapMqttClient(c);
+    const states: string[] = [];
+    t.onConnectionState((s) => states.push(s));
+    const p = t.connect(CONNECT);
+    c.connected = true;
+    c.emit('connect');
+    await p;
+    // Broker blip: mqtt.js drops the connection, then auto-reconnects on its own — connect() is
+    // never called again, only these events fire.
+    c.emit('close');
+    c.emit('reconnect');
+    c.emit('connect');
+    expect(states).toEqual(['connected', 'closed', 'reconnecting', 'connected']);
+  });
+
   it('deduplicates listeners on repeated connect()', async () => {
     const c = fakeClient({ topic: CONNECT.will.topic });
     const t = wrapMqttClient(c);

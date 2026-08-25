@@ -4,6 +4,7 @@ import type { Request } from '../types/requests.js';
 import { Iso21423Error } from '../errors.js';
 import { Iso21423Client } from '../core/client.js';
 import { EntityHandle } from '../core/entityHandle.js';
+import type { ActionExecutor } from '../core/executor.js';
 import type { DispatchTarget } from '../core/requestServer.js';
 import type { ActionHandler, ExecutionPolicy, SecurityOptions } from '../core/types.js';
 import type { SequenceStore } from '../core/sequence.js';
@@ -105,6 +106,11 @@ export class FleetGateway {
     }
 
     await imrfm.setDispatchInterceptor((request) => gateway.resolveDispatch(request));
+    // ND-12: a dispatched request runs in the target robot's executor, not the IMRFM's own — a
+    // cancelRequest for it must be resolvable there too (controller ruling).
+    await imrfm.setManagedExecutorsHook(() => gateway.imrs()
+      .map((h) => h.dispatchTarget()?.executor)
+      .filter((e): e is ActionExecutor => e !== undefined));
 
     return gateway;
   }
@@ -134,6 +140,7 @@ export class FleetGateway {
         // — so undoing our own bookkeeping (the handle list and the manager's manages array) is
         // all there is to do before rethrowing.
         this.imrHandles.delete(reg.id);
+        this.client.removeManagedEntity(this.imrfm.entityUuid, reg.id);
         const identity = this.imrfm.identity();
         const manages = (identity.capabilities.manages ?? []).filter((uuid) => uuid !== reg.id);
         await this.imrfm.updateIdentity({ capabilities: { ...identity.capabilities, manages } });

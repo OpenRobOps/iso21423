@@ -9,7 +9,7 @@ import { toTimestamp } from './types.js';
 import { IncomingRequest, type StatusSink } from './incomingRequest.js';
 import type { RequestAcceptanceFilter } from './filters.js';
 import { DEFAULT_PRIORITY, type ExecutionPolicy } from './policies.js';
-import type { ActionExecutor } from './executor.js';
+import { resolveCancelRequest, type ActionExecutor } from './executor.js';
 import type { EntityHandle } from './entityHandle.js';
 
 interface Registration { filter: RequestAcceptanceFilter; handler: (req: IncomingRequest) => void }
@@ -55,6 +55,10 @@ export class RequestServer {
   // onRequestSettled when a gateway wires them; a plain client never touches either.
   private dispatchInterceptor?: DispatchInterceptor;
   private requestSettledHook?: (requestTopic: string) => void;
+  // ND-12 cancel-resolution seam: every managed handle's executor, consulted when a cancelRequest
+  // doesn't name a run in this server's own executor — a dispatched request actually runs in the
+  // target robot's executor, not the IMRFM's own.
+  private managedExecutorsHook?: () => Iterable<ActionExecutor>;
 
   constructor(private readonly ctx: EntityContext) {
     this.sink = {
@@ -71,7 +75,10 @@ export class RequestServer {
     // kind: null (point 1) — a schema-routed subscription would divert malformed payloads to
     // 'validation-warning' and no rejection would ever be published (D-13).
     this.sessionSub = await this.ctx.session.subscribeTopic(
-      filter, null, (msg, meta) => { void this.handleInbound(msg as string, meta); }, { qos: 2 });
+      filter, null, (msg, meta) => {
+        this.handleInbound(msg as string, meta)
+          .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
+      }, { qos: 2 });
   }
 
   /** @internal — EntityHandle.onRequest wires the executor in here once, the first time it's used. */
@@ -82,6 +89,12 @@ export class RequestServer {
   /** @internal — EntityHandle.setDispatchInterceptor (ND-12, IMRFM handle only). */
   setDispatchInterceptor(cb: DispatchInterceptor): void {
     this.dispatchInterceptor = cb;
+  }
+
+  /** @internal — EntityHandle.setManagedExecutorsHook (ND-12 cancel resolution, IMRFM handle
+   *  only). */
+  setManagedExecutorsHook(cb: () => Iterable<ActionExecutor>): void {
+    this.managedExecutorsHook = cb;
   }
 
   /** @internal — EntityHandle.onRequestSettled (ND-10 janitor feed). */
@@ -96,6 +109,14 @@ export class RequestServer {
   }
 
   get handlerCount(): number { return this.registrations.length; }
+
+  /** ND-18: count of admitted (handed to a handler), still-non-terminal requests — what
+   *  ClientHealth.activeRequests.serving sums across every handle. */
+  get servingCount(): number {
+    let n = 0;
+    for (const data of this.activeStatuses.values()) if (data.admitted) n++;
+    return n;
+  }
 
   async teardown(): Promise<void> {
     await this.sessionSub?.unsubscribe();
@@ -169,12 +190,17 @@ export class RequestServer {
       const matching = this.registrations.filter((r) => r.filter.matches(request));
       if (matching.length > 0) {
         for (const r of matching) r.handler(req);
-      } else if (this.executor && this.executor.executor.hasHandlers()) {
-        // ND-11.1: the executor resolves cancelRequest itself, never an app handler.
-        await this.executor.executor.resolveCancelRequest(req);
       } else {
-        this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
-        await req.reject('ACTION_NOT_IMPLEMENTED');
+        const executors = this.cancelExecutors();
+        if (executors.length > 0) {
+          // ND-11.1/ND-12: the executor resolves cancelRequest itself, never an app handler — a
+          // dispatched request may have run in a managed handle's executor instead of this
+          // server's own, so every candidate is searched before giving up.
+          await resolveCancelRequest(req, executors);
+        } else {
+          this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
+          await req.reject('ACTION_NOT_IMPLEMENTED');
+        }
       }
       return;
     }
@@ -235,7 +261,10 @@ export class RequestServer {
       // Re-admit pending requests after a terminal transition (async to avoid blocking publishStatus)
       // ponytail: async re-admit means buffered requests may see slight delay before handling;
       // upgrade to sync if buffering causes QoS issues under load.
-      setImmediate(() => { void this.reAdmitPending(); });
+      setImmediate(() => {
+        this.reAdmitPending()
+          .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
+      });
     } else {
       // Priority is recorded from the validated Request itself, so it is fixed at RECEIVED time.
       this.activeStatuses.set(req.requestUuid, {
@@ -319,6 +348,15 @@ export class RequestServer {
     }
     this.ctx.diagnostic('dispatch-rejected', { reason: 'ACTION_NOT_IMPLEMENTED' });
     await req.reject('ACTION_NOT_IMPLEMENTED');
+  }
+
+  /** Every executor a cancelRequest should be resolved against: this server's own first (if any),
+   *  then every managed handle's (ND-12, IMRFM only). */
+  private cancelExecutors(): ActionExecutor[] {
+    const list: ActionExecutor[] = [];
+    if (this.executor) list.push(this.executor.executor);
+    if (this.managedExecutorsHook) list.push(...this.managedExecutorsHook());
+    return list;
   }
 
   /** Enforce bufferLimit: if the buffer exceeds the limit, displace the oldest request with REJECTED. */

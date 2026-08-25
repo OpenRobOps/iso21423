@@ -153,6 +153,14 @@ export class Iso21423Client {
     return [...(this.managedEntities.get(managerUuid) ?? [])];
   }
 
+  /** @internal — FleetGateway.registerImr rollback (ND-15 self-check failure): drops a managed
+   *  entity's handle so listManagedEntities()/health() stop reporting it. */
+  removeManagedEntity(managerUuid: Uuid, entityUuid: Uuid): void {
+    const list = this.managedEntities.get(managerUuid);
+    if (!list) return;
+    this.managedEntities.set(managerUuid, list.filter((h) => h.entityUuid !== entityUuid));
+  }
+
   /** Set the client-wide default execution policy (P-2), overridable per entity handle. */
   setDefaultExecutionPolicy(policy: ExecutionPolicy): void {
     this.defaultExecutionPolicy = policy;
@@ -262,7 +270,10 @@ export class Iso21423Client {
   discover(): EntityCatalog {
     // ensureSession() is idempotent — reuses the already-open session if registerSelfEntity ran
     // first, else opens an identity-less one. `this.cache` always exists once it resolves.
-    void this.ensureSession().then(() => this.cache!.watchDisconnections());
+    void this.ensureSession().then(() => this.cache!.watchDisconnections())
+      // No fitting DiagnosticCode for "the session itself never opened" — console.error, same
+      // fallback convention as Iso21423Session.emitError with no error listeners.
+      .catch((err) => console.error('[Iso21423Client] discover(): failed to open session', err));
 
     return {
       entities: () => this.cache?.entities() ?? [],
@@ -290,7 +301,7 @@ export class Iso21423Client {
         managed: [...this.managedEntities.values()].flat().map((h) => h.entityUuid),
       },
       subscriptions: this.subscriptionCount,
-      activeRequests: { sent: this.inFlightRequests.size, serving: 0 }, // serving: Task 6/7
+      activeRequests: { sent: this.inFlightRequests.size, serving: this.servingCount() },
       counters: { ...this.counters },
     };
   }
@@ -421,8 +432,17 @@ export class Iso21423Client {
   }
 
   private diagnostic(code: DiagnosticCode, detail?: unknown): void {
+    if (code === 'dispatch-rejected') this.counters.rejections++;
     const event: DiagnosticEvent = { code, detail, at: new Date() };
     for (const cb of this.listeners.diagnostic) cb(event);
+  }
+
+  /** ND-18: sum of servingCount() across every self and managed handle. */
+  private servingCount(): number {
+    let n = 0;
+    for (const handle of this.selfEntities.values()) n += handle.servingCount();
+    for (const list of this.managedEntities.values()) for (const handle of list) n += handle.servingCount();
+    return n;
   }
 
   private trackSubscription(sub: Subscription): Subscription {

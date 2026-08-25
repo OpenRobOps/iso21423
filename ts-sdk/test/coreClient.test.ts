@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { Iso21423Client, EntityFilter, Iso21423Error } from '../src/index.js';
+import {
+  Iso21423Client, EntityFilter, Iso21423Error, RequestAcceptanceFilter, move,
+} from '../src/index.js';
 import { MemoryBroker } from '../src/testing/index.js';
 
 const IMR_UUID = '91403a21-7534-4467-99a6-79c46a130fe8';
 const FLEET_UUID = '42177726-26f7-4f5c-b735-a12a427bb96d';
+const CCS = '2385eed2-86ca-4dc9-8f17-dac062ce9a08';
+const target = { location: { ccsId: CCS, x: 1, y: 2, z: 0 } };
 const ns = (t: string, u: string, r: string) => `/ISO_21423/v1/${t}/${u}/${r}`;
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
 
@@ -173,6 +177,41 @@ describe('observation', () => {
     expect(h.connection).toBe('connected');
     expect(h.entities.self).toEqual([IMR_UUID]);
     expect(h.counters.published).toBeGreaterThan(0);
+  });
+
+  it('health() counts rejections and in-flight serving requests (ND-18)', async () => {
+    const broker = new MemoryBroker();
+    const robotClient = await client(broker);
+    const robot = await robotClient.registerSelfEntity(registration);
+    const senderClient = await Iso21423Client.connect({
+      transport: broker.createTransport(), sequenceStore: null, requestTimeoutMs: 500,
+    });
+    const sender = await senderClient.registerSelfEntity({
+      entityUuid: FLEET_UUID, entityType: 'TrafficController', manufacturerName: 'Acme Traffic',
+    });
+    await flush();
+
+    // No handler ever matches or claims this request (a low-level filter that never matches, and
+    // no onRequest executor registered yet) — RequestServer's own ACTION_NOT_IMPLEMENTED fallback
+    // fires a 'dispatch-rejected' diagnostic.
+    await robot.acceptRequests(RequestAcceptanceFilter.actions(['never-sent']), () => {});
+    const rejected = await sender.sendRequest({
+      destination: IMR_UUID, requireCapability: false, details: [move(target)],
+    });
+    await expect(rejected.completion()).rejects.toThrow();
+    expect(robotClient.health().counters.rejections).toBeGreaterThan(0);
+
+    // A gated onRequest handler: serving should read 1 while it's still executing.
+    let release = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    robot.onRequest('move', async (_a, ctx) => { await gate; return ctx.succeeded(); });
+    const serving = await sender.sendRequest({ destination: IMR_UUID, details: [move(target)] });
+    await flush();
+    expect(robotClient.health().activeRequests.serving).toBe(1);
+    release();
+    await serving.completion();
+    await flush(); // let the robot's own publishStatus() finish removing it from activeStatuses
+    expect(robotClient.health().activeRequests.serving).toBe(0);
   });
 
   it('close() unsubscribes tracked subscriptions and zeroes health().subscriptions', async () => {

@@ -101,6 +101,35 @@ describe('FleetGateway', () => {
     expect(status.detailStatuses[0]!.status.reason).toBe('REJECTED');
   });
 
+  it('cancels a dispatched (ND-12) request in the target robot\'s executor (controller ruling)', async () => {
+    const broker = new MemoryBroker();
+    const g = await gateway(broker);
+    await g.registerImr({ id: IMR_A, manufacturerName: 'Acme', accepts: ['move'] });
+    let aborted = false;
+    g.onRequest('move', async (_a, ctx) => {
+      await new Promise<void>((resolve) => ctx.signal.addEventListener('abort', () => resolve()));
+      aborted = true;
+      return ctx.aborted('OK', 'canceled by request');
+    });
+    g.onDispatch((_req, imrs) => imrs[0]!.entityUuid);
+    const sender = await requester(broker);
+    await flush();
+    const req = await sender.sendRequest({
+      destination: '', destinationType: 'IMRFM', requireCapability: false, details: [move(target)],
+    });
+    await flush();
+    await req.cancel();
+    await expect(req.completion()).rejects.toThrow(/CANCELED/);
+    expect(aborted).toBe(true);
+    // The request arrived (and its status lives) on the IMRFM's own topic — ND-12 dispatch never
+    // retargets the wire topic, only which executor actually runs it. Filter by this request's
+    // own uuid: the cancelRequest is a second, concurrently-settling request on the same topic
+    // prefix and must not be mistaken for the original's status stream.
+    const statuses = broker.messagesOn(`/ISO_21423/v1/IMRFM/${FLEET}/request/${req.requestUuid}/status`)
+      .map((m) => JSON.parse(m.payload.toString()) as { status: string });
+    expect(statuses.at(-1)!.status).toBe('CANCELED');
+  });
+
   it('the janitor clears a retained request a crashed sender left behind (ND-10)', async () => {
     const broker = new MemoryBroker();
     const g = await gateway(broker, { janitor: { graceMs: 5 } });
@@ -160,5 +189,9 @@ describe('FleetGateway', () => {
     await expect(g.registerImr({ id: IMR_A, manufacturerName: 'Acme', accepts: ['move'] }))
       .rejects.toThrow(AuthorizationDenied);
     expect(g.imrs().map((h) => h.entityUuid)).not.toContain(IMR_A);
+    // Rollback also has to drop it from the client's own bookkeeping (ND-18) — otherwise
+    // listManagedEntities()/health() keep reporting a robot that was never actually registered.
+    expect(g.client.listManagedEntities(FLEET).map((h) => h.entityUuid)).not.toContain(IMR_A);
+    expect(g.client.health().entities.managed).not.toContain(IMR_A);
   });
 });

@@ -246,12 +246,29 @@ export class EntityHandle {
     server.setDispatchInterceptor(cb);
   }
 
+  /**
+   * @internal — FleetGateway cancel-resolution seam (ND-12): wires the managed-handles executor
+   * lookup onto this handle's `RequestServer` (the IMRFM handle, wired once at
+   * `FleetGateway.connect()`) so a cancelRequest for a dispatched request can find the run in the
+   * robot's executor instead of the IMRFM's own.
+   */
+  async setManagedExecutorsHook(cb: () => Iterable<ActionExecutor>): Promise<void> {
+    const server = this.ensureRequestServer();
+    await server.ensureStarted();
+    server.setManagedExecutorsHook(cb);
+  }
+
   /** @internal — ND-12 retarget seam: this handle's executor, if an `onRequest` handler is
    *  registered on it; used to hand a dispatched request off to a managed handle. A valid,
    *  registered robot with no `onRequest` handler yields `undefined` here too — the dispatch
    *  callback rejects it the same as an unknown uuid (there is nothing to run the request). */
   dispatchTarget(): DispatchTarget | undefined {
     return this.#executor ? { executor: this.#executor, entity: this } : undefined;
+  }
+
+  /** ND-18: requests this handle's RequestServer is currently serving (0 if it never started). */
+  servingCount(): number {
+    return this.#requestServer?.servingCount ?? 0;
   }
 
   private ensureRequestServer(): RequestServer {

@@ -74,25 +74,6 @@ export class ActionExecutor {
     return true;
   }
 
-  /** ND-11.1: cancelRequest is resolved by the executor itself, never dispatched to an app
-   *  handler. `cancelReq` is the cancelRequest's own IncomingRequest. */
-  async resolveCancelRequest(cancelReq: IncomingRequest): Promise<void> {
-    const props = cancelReq.request.details[0]?.properties as
-      { source?: string; requestId?: number } | undefined;
-    const found = props?.source !== undefined && props.requestId !== undefined
-      ? this.cancel({ source: props.source, sequenceId: props.requestId })
-      : false;
-    if (found) {
-      // SUCCEEDED is only reachable from EXECUTING (Figure C.3) — the cancel op has no detail
-      // work of its own to run, so step straight through ACCEPTED/EXECUTING.
-      await cancelReq.accept();
-      await cancelReq.updateStatus({ status: 'EXECUTING' });
-      await cancelReq.complete({ status: 'SUCCEEDED' });
-    } else {
-      await cancelReq.reject('REJECTED');
-    }
-  }
-
   /** Entry point called once a request is admitted (RequestServer step 6 fallback). The run stays
    *  registered in `this.runs` (so a cancelRequest can still find it) until the request is fully
    *  terminal — including through the RECOVERY phase (controller ruling: RECOVERY→CANCELED is
@@ -257,5 +238,30 @@ export class ActionExecutor {
       }
     }
     return undefined;
+  }
+}
+
+/**
+ * ND-11.1 / ND-12: cancelRequest is resolved by searching for the named (source, requestId) run
+ * across a list of executors — never dispatched to an app handler. A plain client passes just its
+ * own executor; the IMRFM's RequestServer additionally passes every managed handle's executor,
+ * because a request it dispatched (ND-12) actually runs there, not in its own `runs` map.
+ */
+export async function resolveCancelRequest(
+  cancelReq: IncomingRequest, executors: Iterable<ActionExecutor>,
+): Promise<void> {
+  const props = cancelReq.request.details[0]?.properties as
+    { source?: string; requestId?: number } | undefined;
+  const key = props?.source !== undefined && props.requestId !== undefined
+    ? { source: props.source, sequenceId: props.requestId } : undefined;
+  const found = key !== undefined && [...executors].some((ex) => ex.cancel(key));
+  if (found) {
+    // SUCCEEDED is only reachable from EXECUTING (Figure C.3) — the cancel op has no detail
+    // work of its own to run, so step straight through ACCEPTED/EXECUTING.
+    await cancelReq.accept();
+    await cancelReq.updateStatus({ status: 'EXECUTING' });
+    await cancelReq.complete({ status: 'SUCCEEDED' });
+  } else {
+    await cancelReq.reject('REJECTED');
   }
 }
