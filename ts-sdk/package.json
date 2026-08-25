@@ -24,7 +24,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsup",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'test/live/**'",
     "test:watch": "vitest",
     "test:integration": "vitest run test/integration",
     "test:live": "vitest run test/live",
