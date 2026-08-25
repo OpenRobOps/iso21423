@@ -2,6 +2,7 @@ import { ROOT_NAMESPACE } from '../types/constants.js';
 import type { Uuid } from '../types/common.js';
 import type { Request } from '../types/requests.js';
 
+/** One filter clause; an omitted field means "any" (compiles to an MQTT `+` wildcard). */
 export interface EntitySelector { entityType?: string; entityUuid?: Uuid }
 
 const level = (v?: string) => v ?? '+';
@@ -30,6 +31,7 @@ export class EntityFilter {
     return new EntityFilter(selectors);
   }
 
+  /** One MQTT topic filter per selector, for subscribing to `resource` across every entity this filter selects. */
   topicFiltersFor(resource: string): string[] {
     return this.selectors.map(
       (s) => `${ROOT_NAMESPACE}/${level(s.entityType)}/${level(s.entityUuid)}/${resource}`);
@@ -42,6 +44,7 @@ export class EntityFilter {
   }
 }
 
+/** Shared base for filters that subscribe to a fixed topic suffix (e.g. `request/+`) across a set of entity selectors. */
 class TopicSetFilter {
   protected constructor(
     protected readonly selectors: readonly EntitySelector[],

@@ -9,6 +9,7 @@ import { nowTimestamp } from '../types/common.js';
 import { validateMessage, assertValid, type MessageKind } from '../schema/validators.js';
 import { AuthorizationDenied, Iso21423Error } from '../errors.js';
 
+/** Options for {@link Iso21423Session.connect}. */
 export interface SessionOptions {
   transport: MqttTransport;
   entity: EntityRef;
@@ -23,6 +24,7 @@ export interface SessionSubscription {
   unsubscribe(): Promise<void>;
 }
 
+/** Topic-derived metadata handed to subscription handlers alongside the parsed payload. */
 export interface TopicMeta {
   topic: string;
   entityType: string;
@@ -32,6 +34,7 @@ export interface TopicMeta {
   isRequestStatus: boolean;
 }
 
+/** Emitted on the `'validation-warning'` event when an inbound message fails schema validation or JSON parsing. */
 export interface ValidationWarningEvent {
   topic: string;
   payload: string;
@@ -50,6 +53,11 @@ interface TopicSub {
   handler: (msg: unknown, meta: TopicMeta) => void;
 }
 
+/**
+ * Owns one MQTT connection for a single entity: topic-scoped subscribe/publish, retained-resource
+ * dedup and republish-on-reconnect, streaming-resource rate gating, LWT arming, and inbound schema
+ * validation. This is the layer `/core` builds its request/response semantics on top of.
+ */
 export class Iso21423Session {
   private retainedOwned = new Map<string, { payload: string; qos: 0 | 1 | 2 }>();
   private rateGates = new Map<string, RateGate>();
@@ -67,6 +75,10 @@ export class Iso21423Session {
     private readonly armWill: boolean,
   ) {}
 
+  /**
+   * Connects the transport and, unless `armWill` is false, arms the B.4 Last Will and clears any
+   * stale retained LOST_CONNECTION left over from a prior ungraceful disconnect (spec §4).
+   */
   static async connect(opts: SessionOptions): Promise<Iso21423Session> {
     const armWill = opts.armWill ?? true;
     const session = new Iso21423Session(opts.transport, opts.entity, opts.validateOutbound ?? true, armWill);
@@ -101,6 +113,13 @@ export class Iso21423Session {
     this.listeners[event].push(cb);
   }
 
+  /**
+   * Publishes a known resource (looked up in {@link RESOURCE_CONFIG} for its QoS/retain/rate).
+   * Retained resources are deduped on-change (a re-publish with identical body is a no-op) and
+   * rolled back from the dedup cache if the publish itself fails. Rate-limited (streaming)
+   * resources go through a per-topic {@link RateGate} and are fire-and-forget: publish failures
+   * there are reported via the `error` event, not thrown.
+   */
   async publishResource(ref: EntityRef, resource: string, kind: MessageKind | null, payload: unknown): Promise<void> {
     const config = RESOURCE_CONFIG[resource];
     if (!config) throw new Iso21423Error(`unknown resource "${resource}"`);
@@ -212,11 +231,13 @@ export class Iso21423Session {
     await this.transport.publish(topic, payload, opts);
   }
 
+  /** Clears a retained topic by publishing an empty retained payload, and drops it from the owned-retained dedup cache. */
   async clearRetained(topic: string): Promise<void> {
     this.retainedOwned.delete(topic);
     await this.transport.publish(topic, '', { qos: 1, retain: true });
   }
 
+  /** Optionally publishes a final status, disposes all rate gates, then ends the transport. */
   async close(finalStates?: string[]): Promise<void> {
     if (finalStates) {
       await this.publishResource(this.entity, 'status', 'entityStatus', {
@@ -229,6 +250,12 @@ export class Iso21423Session {
     await this.transport.end();
   }
 
+  /**
+   * Routes an inbound message to every registered {@link TopicSub} whose filter matches the
+   * topic. `kind: null` subscribers get the raw text with no parsing; typed subscribers get an
+   * empty payload treated as a retained-clear (skipped silently) and malformed/non-conformant
+   * payloads reported via `emitWarning` rather than delivered to the handler.
+   */
   private dispatch(topic: string, payload: Buffer): void {
     const parsed = parseTopic(topic);
     if (!parsed) return;

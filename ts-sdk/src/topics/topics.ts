@@ -1,7 +1,9 @@
 import { ROOT_NAMESPACE } from '../types/constants.js';
 
+/** Identifies an entity for topic-building purposes: its ISO type ("IMR"/"IMRFM") and its uuid. */
 export interface EntityRef { entityType: string; entityUuid: string }
 
+/** Decomposed form of an ISO 21423 topic string, as produced by {@link parseTopic}. */
 export interface ParsedTopic {
   entityType: string;
   entityUuid: string;
@@ -26,10 +28,15 @@ export function disconnectionTopic(ref: EntityRef): string {
   return topicFor(ref, 'disconnection');
 }
 
+/** MQTT wildcard subscription matching every entity's identity topic, used to build the fleet-wide entity cache. */
 export function identityWildcard(): string {
   return `${ROOT_NAMESPACE}/+/+/identity`;
 }
 
+/**
+ * Splits a concrete topic string into its parts, or returns `null` if it doesn't
+ * live under {@link ROOT_NAMESPACE} or has an unrecognized shape (e.g. extra path segments).
+ */
 export function parseTopic(topic: string): ParsedTopic | null {
   if (!topic.startsWith(`${ROOT_NAMESPACE}/`)) return null;
   const rest = topic.slice(ROOT_NAMESPACE.length + 1).split('/');

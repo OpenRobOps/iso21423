@@ -16,6 +16,7 @@ export interface MqttClientLike {
   endAsync(force?: boolean): Promise<void>;
 }
 
+/** Options for {@link createMqttTransport}. */
 export interface MqttTransportOptions {
   username?: string;
   password?: string;
@@ -24,6 +25,7 @@ export interface MqttTransportOptions {
   reconnectPeriod?: number;
 }
 
+/** {@link MqttTransport} implementation over mqtt@5, either owning its own client ({@link createMqttTransport}) or wrapping a caller-supplied one ({@link wrapMqttClient}). */
 class MqttAdapter implements MqttTransport {
   private client?: MqttClientLike;
   private ended = false;
@@ -37,6 +39,12 @@ class MqttAdapter implements MqttTransport {
     private readonly ownsClient: boolean,
   ) {}
 
+  /**
+   * Acquires the underlying mqtt client (via the constructor-supplied `acquire`) and wires
+   * message/connection-state listeners exactly once per adapter instance, so repeated `connect()`
+   * calls (e.g. reconnect flows) don't accumulate duplicate listeners. For a caller-constructed
+   * client whose will doesn't match `opts.will`, throws (P-4) rather than silently diverging.
+   */
   async connect(opts: TransportConnectOptions): Promise<void> {
     const client = await this.acquire(opts);
     if (this.checkWill && opts.will && client.options?.will?.topic !== opts.will.topic) {
@@ -123,6 +131,7 @@ class MqttAdapter implements MqttTransport {
     await this.live().publishAsync(topic, payload, opts);
   }
 
+  /** Subscribes and reports whether the broker granted it — false if any SUBACK return code was a refusal (>= 0x80, ND-15) or no grants came back. */
   async subscribe(filter: string, opts: { qos: 0 | 1 | 2 }): Promise<{ granted: boolean }> {
     const grants = await this.live().subscribeAsync(filter, opts);
     // MQTT 3.1.1 SUBACK: return code >= 0x80 means the broker refused the filter (ND-15).
@@ -148,6 +157,7 @@ class MqttAdapter implements MqttTransport {
     this.emitState('closed');
   }
 
+  /** Returns the connected client or throws {@link BrokerUnavailable} if `end()` was called or `connect()` hasn't completed. */
   private live(): MqttClientLike {
     if (this.ended || !this.client) throw new BrokerUnavailable('mqtt transport is not connected');
     return this.client;

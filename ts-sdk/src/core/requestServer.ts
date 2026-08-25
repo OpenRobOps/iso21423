@@ -102,6 +102,7 @@ export class RequestServer {
     this.requestSettledHook = cb;
   }
 
+  /** Adds a low-level request handler for `filter`; returns a deregistration function (not itself async — callers unsubscribe/teardown separately once `handlerCount` hits 0). */
   register(filter: RequestAcceptanceFilter, handler: (req: IncomingRequest) => void): () => void {
     const reg: Registration = { filter, handler };
     this.registrations.push(reg);
@@ -123,6 +124,12 @@ export class RequestServer {
     this.sessionSub = undefined;
   }
 
+  /**
+   * Top-level inbound message handler for this entity's `request/+` subscription: parses and
+   * schema-validates the payload (rejecting/warning on failure), drops retained clears and
+   * already-seen duplicates, publishes RECEIVED, then routes the request — dispatch interception
+   * (ND-12) first, then cancelRequest resolution, then normal admission-policy handling.
+   */
   private async handleInbound(text: string, meta: TopicMeta): Promise<void> {
     if (text === '') return;                              // point 2: retained clear, ignore
     const requestUuid = meta.requestUuid;

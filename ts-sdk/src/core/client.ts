@@ -29,6 +29,7 @@ function defaultSequenceStore(): FileSequenceStore {
   return sharedSequenceStore ??= new FileSequenceStore();
 }
 
+/** Options for {@link Iso21423Client.connect}. */
 export interface ClientOptions {
   transport?: MqttTransport;
   url?: string;
@@ -104,6 +105,12 @@ export class Iso21423Client {
 
   // ---- registration -------------------------------------------------------
 
+  /**
+   * Registers this process's own entity: opens the session (arming the B.4 Last Will) if it
+   * isn't open yet, and publishes the resulting identity. Must be the first operation on the
+   * client (P-4) — if a session is already open under a different entity, throws rather than
+   * silently registering under the wrong identity/will.
+   */
   async registerSelfEntity(reg: EntityRegistration): Promise<EntityHandle> {
     const ref: EntityRef = { entityType: reg.entityType, entityUuid: reg.entityUuid };
     const session = await this.ensureSession(ref);
@@ -122,6 +129,11 @@ export class Iso21423Client {
     return handle;
   }
 
+  /**
+   * Registers an entity managed on behalf of `managerUuid` (an already-registered self entity,
+   * per B.5.2.4): publishes the managed entity's identity with `managedBy` set, and updates the
+   * manager's own retained identity to include it in `manages`.
+   */
   async registerManagedEntity(managerUuid: Uuid, reg: ManagedEntityRegistration): Promise<EntityHandle> {
     const manager = this.selfEntities.get(managerUuid);
     if (!manager) {
@@ -207,6 +219,7 @@ export class Iso21423Client {
     return this.trackSubscription(sub);
   }
 
+  /** Subscribes to a raw resource (not identity — see {@link subscribeEntities}) across every entity `filter` selects. */
   async subscribeResource<T = unknown>(
     kind: ResourceKind, filter: EntityFilter, handler: (ev: ResourceEvent<T>) => void,
   ): Promise<Subscription> {
@@ -225,6 +238,7 @@ export class Iso21423Client {
     return this.trackSubscription(composeSubscription(topicFilters, parts));
   }
 
+  /** Observes inbound requests matching `filter`, without participating in serving them (no admission/status effects). */
   async subscribeRequests(
     filter: RequestFilter, handler: (ev: RequestEvent) => void,
   ): Promise<Subscription> {
@@ -244,6 +258,7 @@ export class Iso21423Client {
     return this.trackSubscription(composeSubscription(topicFilters, parts));
   }
 
+  /** Observes request status updates matching `filter`, e.g. for a fleet-wide activity dashboard. */
   async subscribeRequestStatus(
     filter: RequestStatusFilter, handler: (ev: ResourceEvent<RequestStatus>) => void,
   ): Promise<Subscription> {
@@ -291,6 +306,7 @@ export class Iso21423Client {
 
   // ---- misc -----------------------------------------------------------------
 
+  /** Point-in-time snapshot of connection state, registered entities, subscription/traffic counters — see {@link ClientHealth}. */
   health(): ClientHealth {
     return {
       connection: this.session?.connectionState ?? 'closed',
@@ -445,6 +461,7 @@ export class Iso21423Client {
     return n;
   }
 
+  /** Wraps a raw {@link Subscription} to maintain `subscriptionCount` and the tracked-subs set that `close()` drains. */
   private trackSubscription(sub: Subscription): Subscription {
     this.subscriptionCount += sub.topicFilters.length;
     let counted = true;

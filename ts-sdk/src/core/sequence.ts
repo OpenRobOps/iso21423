@@ -87,6 +87,7 @@ export class SequenceCounter {
     }
   }
 
+  /** Returns the next sequenceId, persisting a fresh reservation block when the current one is exhausted. */
   async next(): Promise<number> {
     this.counter += 1;
     if (this.counter > this.reservedThrough && this.store) {

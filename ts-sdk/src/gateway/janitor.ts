@@ -15,6 +15,7 @@ export class RetainedRequestJanitor {
     private readonly onCleared: (topic: string) => void,
   ) {}
 
+  /** Schedules `requestTopic` to be force-cleared after the grace period; the clear itself is idempotent, so overlapping/duplicate `note()` calls are harmless. */
   note(requestTopic: string): void {
     const timer = setTimeout(() => {
       this.timers.delete(timer);

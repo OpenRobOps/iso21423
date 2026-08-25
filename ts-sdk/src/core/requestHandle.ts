@@ -7,6 +7,11 @@ import { BrokerUnavailable, RequestFailed, RequestTimeout } from '../errors.js';
 import { composeSubscription, type Subscription } from './subscription.js';
 import type { EntityContext } from './entityHandle.js';
 
+/**
+ * Requester-side lifecycle for one outbound {@link Request}: subscribes to its status topic,
+ * resolves `completion()` on a terminal status (or rejects on timeout/broker loss), and owns the
+ * sender-side ND-10 duty of clearing the retained request once it's terminal.
+ */
 export class RequestHandle {
   readonly createdAt = new Date();
   #latest?: RequestStatus;
@@ -70,6 +75,7 @@ export class RequestHandle {
   /** @internal — the resolved topic ref (post R3 empty-destination resolution), for sendCancel. */
   internalDestRef(): EntityRef { return this.destRef; }
 
+  /** Registers a callback for every inbound status update on this request (not just the terminal one); returns a token to stop receiving them. */
   onStatus(handler: (s: RequestStatus) => void): Subscription {
     this.#listeners.push(handler);
     return composeSubscription([requestStatusTopic(this.destRef, this.requestUuid)], [{
@@ -79,8 +85,10 @@ export class RequestHandle {
     }]);
   }
 
+  /** Resolves with the terminal SUCCEEDED status, or rejects with {@link RequestFailed}/{@link RequestTimeout}/{@link BrokerUnavailable} — never both. */
   completion(): Promise<RequestStatus> { return this.#completion; }
 
+  /** Sends a cancelRequest for this request (or one action within it, via `actionId`); a no-op once the request has already settled. */
   async cancel(opts: { actionId?: number } = {}): Promise<void> {
     if (this.#settled) return;      // no-op: nothing left to cancel
     await this.ctx.sendCancel(this, opts.actionId);

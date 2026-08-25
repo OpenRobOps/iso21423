@@ -10,6 +10,7 @@ export type MessageKind =
   | 'localTrajectory' | 'globalPath' | 'globalPlan'
   | 'request' | 'requestStatus' | 'requestStatusArray';
 
+/** Result of {@link validateMessage}: `value` is the normalized payload (present whether or not it validated). */
 export interface ValidationResult {
   ok: boolean;
   value?: unknown;
@@ -23,6 +24,7 @@ ajv.addSchema(schema);
 
 const KNOWN_STATES = new Set<string>(KNOWN_OPERATING_STATES);
 
+/** Appends a warning (mutating `warnings`) for each `entityStatus.states` entry not in {@link KNOWN_OPERATING_STATES} — schema-valid but possibly a deployment-specific extension. */
 function collectWarnings(kind: MessageKind, value: unknown, warnings: string[]): void {
   if (kind !== 'entityStatus') return;
   const states = (value as { states?: unknown })?.states;
@@ -34,6 +36,7 @@ function collectWarnings(kind: MessageKind, value: unknown, warnings: string[]):
   }
 }
 
+/** Normalizes then validates a raw wire payload against the ISO 21423 JSON Schema for `kind`. Throws if `kind` has no registered schema. */
 export function validateMessage(kind: MessageKind, raw: unknown): ValidationResult {
   const { value, warnings } = normalizeInbound(kind, raw);
   const validate = ajv.getSchema(`https://openrobops.org/schemas/iso21423/v1.json#/$defs/${kind}`);

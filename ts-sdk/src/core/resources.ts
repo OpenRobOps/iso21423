@@ -21,6 +21,7 @@ export const RESOURCE_MESSAGE_KIND: Record<string, MessageKind | null> = {
   footprint: null,
 };
 
+/** Looks up a resource's schema message kind; unknown resources are treated as "no schema" rather than throwing. */
 export function messageKindFor(resource: string): MessageKind | null {
   return RESOURCE_MESSAGE_KIND[resource] ?? null;
 }

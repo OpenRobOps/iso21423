@@ -25,7 +25,10 @@ import type { RequestAcceptanceFilter } from './filters.js';
 import { composeSubscription, type Subscription } from './subscription.js';
 import { ActionExecutor } from './executor.js';
 
-/** Internal seam shared by the publication, requester and executor mixins (Tasks 4–7). */
+/**
+ * Internal seam shared by the publication, requester and executor mixins (Tasks 4–7): the shared
+ * dependencies (`session`, `sequence`, `catalog`) plus callbacks up into the owning `Iso21423Client`.
+ */
 export interface EntityContext {
   session: Iso21423Session;
   ref: EntityRef;
@@ -49,6 +52,13 @@ const RETAINED_RESOURCES = [
   'identity', 'batteryStatus', 'globalPath', 'globalPlan', 'activeRequestsStatus', 'disconnection',
 ] as const;
 
+/**
+ * Per-entity facade over a {@link Iso21423Session}: publishes identity/status/telemetry resources,
+ * sends outbound requests (as a requester) and, once `onRequest`/`acceptRequests` is called,
+ * serves inbound ones (as a `RequestServer` + `ActionExecutor` pair). One handle per entity uuid,
+ * whether it's the client's own entity (`ownershipMode: 'self'`) or one it manages on behalf of
+ * a fleet manager (`'managed'`).
+ */
 export class EntityHandle {
   #identity: EntityIdentity;
   #states: OperatingState[] = [];
@@ -89,6 +99,7 @@ export class EntityHandle {
     await this.publish('identity', this.#identity);
   }
 
+  /** Shallow-merges `partial` onto the current identity (top-level fields only — e.g. a partial `capabilities` replaces the whole object) and republishes it with a fresh timestamp. */
   async updateIdentity(partial: Partial<EntityIdentity>): Promise<void> {
     await this.publishIdentity({ ...this.#identity, ...partial, timestamp: toTimestamp() });
   }
@@ -136,6 +147,13 @@ export class EntityHandle {
     await this.publish('globalPlan', { ...snapshot, timestamp: toTimestamp(snapshot.timestamp) });
   }
 
+  /**
+   * Sends a request to `cmd.destination` (or resolves an empty destination via
+   * {@link resolveDestRef}, R3). Unless `requireCapability: false`, checks the destination's
+   * known `accepts` capability list first and throws {@link NotCapableError} for any detail type
+   * it doesn't advertise — skipped entirely for an unknown (not-yet-discovered) destination.
+   * Subscribes to the status topic before publishing the request, so no status can be missed.
+   */
   async sendRequest(cmd: RequestCommand): Promise<RequestHandle> {
     const destRef = this.resolveDestRef(cmd);
 

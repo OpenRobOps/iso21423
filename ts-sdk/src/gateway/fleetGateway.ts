@@ -13,6 +13,7 @@ import { RetainedRequestJanitor } from './janitor.js';
 
 const DEFAULT_JANITOR_GRACE_MS = 30_000;
 
+/** Options for {@link FleetGateway.connect}. */
 export interface FleetGatewayOptions {
   transport?: MqttTransport;
   url?: string;
@@ -30,6 +31,7 @@ export interface FleetGatewayOptions {
   requestTimeoutMs?: number;
 }
 
+/** Options for {@link FleetGateway.registerImr}. */
 export interface ImrRegistration {
   id: Uuid;
   identity?: Record<string, unknown>;
@@ -66,6 +68,12 @@ export class FleetGateway {
     private readonly selfCheckTimeoutMs: number | undefined,
   ) {}
 
+  /**
+   * Connects the underlying client, registers the IMRFM's own identity (arming its Last Will,
+   * decision 1), runs the gateway's own publish self-check (default on, ND-15) unless
+   * `security.selfCheck` is false, and — unless `janitor.enabled` is false — starts the
+   * retained-request janitor and wires the empty-destination dispatch interceptor (ND-12).
+   */
   static async connect(opts: FleetGatewayOptions): Promise<FleetGateway> {
     const client = await Iso21423Client.connect({
       transport: opts.transport,
@@ -115,6 +123,13 @@ export class FleetGateway {
     return gateway;
   }
 
+  /**
+   * Registers a new managed IMR under this IMRFM: creates its `EntityHandle`, wires it into the
+   * janitor, replays every fleet-wide `onRequest` handler onto it, and (if the gateway's self-check
+   * is enabled) publishes a self-check for it. On self-check failure, rolls back the local
+   * bookkeeping (handle map and the manager's `manages` list) before rethrowing — nothing is
+   * retained on the broker to undo, since a denied publish never lands there (ND-15).
+   */
   async registerImr(reg: ImrRegistration): Promise<EntityHandle> {
     const handle = await this.client.registerManagedEntity(this.imrfm.entityUuid, {
       entityUuid: reg.id,
@@ -151,6 +166,7 @@ export class FleetGateway {
     return handle;
   }
 
+  /** Unregisters and removes a managed IMR (no-op if unknown), and drops it from the IMRFM's `manages` list. */
   async unregisterImr(id: Uuid): Promise<void> {
     const handle = this.imrHandles.get(id);
     if (!handle) return;
@@ -165,6 +181,11 @@ export class FleetGateway {
     return [...this.imrHandles.values()];
   }
 
+  /**
+   * Registers an action handler either fleet-wide (default: applied to every current and future
+   * IMR, R6) or scoped to one `imr`, where it shadows a fleet-wide handler for the same type.
+   * Re-registering the same scope for the same type throws unless `override: true` is passed.
+   */
   onRequest<P = Record<string, unknown>>(
     type: string, handler: ActionHandler<P>, opts?: { imr?: Uuid; override?: true },
   ): void {
@@ -198,6 +219,7 @@ export class FleetGateway {
     for (const handle of this.imrHandles.values()) handle.onRequest(type, asHandler, { override: true });
   }
 
+  /** Sets the callback used to pick a target IMR for a request with an empty `destination` (ND-12); return `null` to decline dispatch. */
   onDispatch(cb: (request: Request, imrs: EntityHandle[]) => Uuid | null): void {
     this.dispatchCb = cb;
   }
@@ -209,6 +231,7 @@ export class FleetGateway {
     await this.client.close(opts);
   }
 
+  /** Invokes the `onDispatch` callback (if set) and resolves its chosen uuid to a live IMR's dispatch target. */
   private resolveDispatch(request: Request): DispatchTarget | null {
     if (!this.dispatchCb) return null;
     const uuid = this.dispatchCb(request, this.imrs());

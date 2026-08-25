@@ -6,6 +6,7 @@ import { IllegalTransition } from '../errors.js';
 import { toTimestamp, type RequestDetailStatusUpdate, type RequestStatusUpdate,
   type RequestTerminalUpdate, type StatusReason } from './types.js';
 
+/** What an {@link IncomingRequest} publishes status through; implemented by `RequestServer`. */
 export interface StatusSink {
   /** Publishes one requestStatus message (QoS 2, retained) and refreshes activeRequestsStatus. */
   publishStatus(req: IncomingRequest, status: RequestStatus): Promise<void>;
@@ -13,6 +14,13 @@ export interface StatusSink {
   nextStatusSequenceId(): Promise<number>;
 }
 
+/**
+ * Server-side lifecycle for one received {@link Request}: tracks the overall request state and
+ * each detail's state via {@link RequestLifecycle}/{@link DetailLifecycle}, and publishes a
+ * requestStatus message on every change. A request-level transition cascades onto any
+ * still-in-flight details that legally admit it (see `cascadeDetails`), so callers don't have to
+ * individually resolve every detail before completing the request.
+ */
 export class IncomingRequest {
   readonly #lifecycle = new RequestLifecycle();
   readonly #details: DetailLifecycle[];
@@ -45,6 +53,7 @@ export class IncomingRequest {
 
   async accept(): Promise<void> { await this.transitionTo('ACCEPTED'); }
 
+  /** Transitions straight to ABORTED with the given reason (e.g. for pre-flight rejections that never reach ACCEPTED). */
   async reject(reason: StatusReason): Promise<void> {
     await this.transitionTo('ABORTED', reason);
   }
@@ -142,6 +151,11 @@ export class IncomingRequest {
     });
   }
 
+  /**
+   * Builds and publishes the current requestStatus snapshot. A `reason`/`message` passed here
+   * (from a request-level transition) is attached to the first detail status entry, not stored
+   * at the request level — the wire schema carries reason/message per-detail, not on the request.
+   */
   private async emit(reason?: StatusReason, message?: string): Promise<void> {
     const status: RequestStatus = {
       source: this.sink.ownerUuid,                       // decision 5

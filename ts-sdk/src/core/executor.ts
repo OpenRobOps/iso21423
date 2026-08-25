@@ -18,6 +18,7 @@ const STATE_EXEMPT_TYPES = new Set(['cancelRequest', 'pauseImr', 'resumeImr']);
 
 const majorOf = (version: string): string => version.split('.')[0] ?? version;
 
+/** Bookkeeping for one in-flight `run()`, keyed by (source, sequenceId) so a later cancelRequest can find it. */
 interface ActiveRun {
   controller: AbortController;
   /** Set when a cancelRequest arrived while an atomic detail was executing (or otherwise). */
@@ -53,6 +54,7 @@ export class ActionExecutor {
   private readonly handlers = new Map<string, ActionHandler>();
   private readonly runs = new Map<string, ActiveRun>();
 
+  /** Registers a handler for `type`; throws if one is already registered unless `override: true`. */
   register(type: string, handler: ActionHandler, opts?: { override?: true }): void {
     if (this.handlers.has(type) && !opts?.override) {
       throw new Iso21423Error(
@@ -183,6 +185,12 @@ export class ActionExecutor {
     return { trigger: 'success' };
   }
 
+  /**
+   * Runs a single detail's handler: publishes an EXECUTING status first, then invokes the
+   * registered handler (or produces an ACTION_NOT_IMPLEMENTED result if none exists), catching any
+   * thrown error as a GENERAL_FAILURE abort. Waits for any `ctx.progress()` updates issued during
+   * the handler call to finish publishing before returning.
+   */
   private async runOneDetail(
     index: number, detail: RequestDetail, request: Request, entity: EntityHandle,
     run: ActiveRun,

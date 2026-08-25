@@ -5,6 +5,11 @@ import { topicFilterMatches } from '../topics/topics.js';
 
 interface Sub { filter: string; qos: 0 | 1 | 2 }
 
+/**
+ * In-process stand-in for an MQTT broker: routes published messages to matching subscribers,
+ * stores retained messages, and can simulate a denied subscription or a dropped connection.
+ * Pairs with {@link MemoryTransport} to test the SDK without a real broker.
+ */
 export class MemoryBroker {
   private clients = new Set<MemoryTransport>();
   private retained = new Map<string, TransportMessage>();
@@ -17,6 +22,7 @@ export class MemoryBroker {
     return t;
   }
 
+  /** Makes future `subscribe()` calls for exactly this filter string report `granted: false`, for testing subscription-denied paths. */
   denySubscribe(filterPattern: string): void {
     this.deniedFilters.push(filterPattern);
   }
@@ -26,10 +32,12 @@ export class MemoryBroker {
     return this.deniedFilters.includes(filter);
   }
 
+  /** Current retained payload for `topic`, if any — mirrors what a newly-subscribing client would receive. */
   retainedOn(topic: string): Buffer | undefined {
     return this.retained.get(topic)?.payload;
   }
 
+  /** All messages ever routed to exactly `topic`, in publish order (test assertion helper). */
   messagesOn(topic: string): TransportMessage[] {
     return this.log.filter((m) => m.topic === topic);
   }
@@ -39,6 +47,7 @@ export class MemoryBroker {
     return this.log.filter((m) => m.topic.startsWith(prefix));
   }
 
+  /** Logs `msg`, updates the retained-message store (empty payload clears it), and delivers it to every connected client. */
   route(msg: TransportMessage): void {
     this.log.push(msg);
     if (msg.retain) {
@@ -50,6 +59,7 @@ export class MemoryBroker {
     }
   }
 
+  /** Asynchronously (next tick) delivers every retained message matching `filter` to `to`, mimicking a real broker's SUBSCRIBE-time redelivery. */
   deliverRetained(to: MemoryTransport, filter: string): void {
     for (const msg of this.retained.values()) {
       if (topicFilterMatches(filter, msg.topic)) {
@@ -58,6 +68,7 @@ export class MemoryBroker {
     }
   }
 
+  /** Routes a client's LWT if the disconnect was ungraceful and a will was armed; a graceful `end()` never fires the will. */
   disconnected(t: MemoryTransport, ungraceful: boolean): void {
     if (ungraceful && t.will) {
       this.route({
@@ -76,6 +87,7 @@ export class MemoryBroker {
   }
 }
 
+/** {@link MqttTransport} implementation backed by a {@link MemoryBroker}, for broker-free tests. */
 export class MemoryTransport implements MqttTransport {
   will: TransportConnectOptions['will'];
   clientId = '';
@@ -103,6 +115,7 @@ export class MemoryTransport implements MqttTransport {
     });
   }
 
+  /** Subscribes (unless the broker has denied this filter) and triggers retained-message redelivery for it. */
   async subscribe(filter: string, opts: { qos: 0 | 1 | 2 }): Promise<{ granted: boolean }> {
     if (this.broker.isDenied(filter)) return { granted: false };
     // Re-subscribing the same (filter, qos) pair replaces the entry, as on a real broker.
@@ -129,6 +142,12 @@ export class MemoryTransport implements MqttTransport {
     this.stateCbs.push(cb);
   }
 
+  /**
+   * Delivers `msg` to this client's message callbacks if it's currently connected and either
+   * `viaFilter` is given (a targeted retained redelivery, always delivered) or the topic matches
+   * one of this client's live subscriptions. Isolates each callback's exceptions so one bad
+   * handler can't break delivery to the others.
+   */
   deliver(msg: TransportMessage, viaFilter?: string): void {
     if (!this.connected) return;
     const matched = viaFilter !== undefined

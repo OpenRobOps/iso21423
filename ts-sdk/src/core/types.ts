@@ -21,6 +21,7 @@ export function toTimestamp(t?: Date | IsoTimestamp): IsoTimestamp {
 
 export type { ExecutionPolicy };
 
+/** Options for registering an entity's identity via `Iso21423Client.registerSelfEntity`/`registerManagedEntity`. */
 export interface EntityRegistration {
   entityUuid: Uuid;
   entityType: string;
@@ -34,6 +35,7 @@ export interface EntityRegistration {
 
 export type ManagedEntityRegistration = EntityRegistration;
 
+/** Input to publish a new {@link EntityStatus} snapshot. */
 export interface StatusUpdate {
   states: OperatingState[];
   disabledCapabilities?: Capabilities;
@@ -46,6 +48,7 @@ export interface LocalTrajectoryUpdate {
   timestamp?: Date | IsoTimestamp;
 }
 
+/** Payload delivered to a resource observer callback: the validated/parsed message plus its origin. */
 export interface ResourceEvent<T = unknown> {
   entityType: string;
   entityUuid: Uuid;
@@ -54,6 +57,7 @@ export interface ResourceEvent<T = unknown> {
   message: T;
 }
 
+/** Payload delivered to a request observer callback. */
 export interface RequestEvent {
   entityType: string;
   entityUuid: Uuid;
@@ -72,6 +76,7 @@ export interface SecurityOptions {
   selfCheckTimeoutMs?: number;
 }
 
+/** Internal, non-fatal conditions the client surfaces via a diagnostics event rather than throwing or logging directly. */
 export type DiagnosticCode =
   | 'sequence-store-unavailable' | 'legacy-cancel-normalized' | 'inbound-illegal-transition'
   | 'self-check-failed' | 'janitor-cleared' | 'duplicate-request-ignored'
@@ -79,6 +84,7 @@ export type DiagnosticCode =
 
 export interface DiagnosticEvent { code: DiagnosticCode; detail?: unknown; at: Date }
 
+/** Point-in-time snapshot of client connection/entity/subscription/traffic state. */
 export interface ClientHealth {
   connection: ConnectionState;
   since: Date;
@@ -106,7 +112,9 @@ export interface RequestCommand {
 }
 
 /** Executor-side updates (Tasks 5–7). */
+/** Publishes a new overall status for the whole request. */
 export interface RequestStatusUpdate { status: RequestState; reason?: StatusReason; message?: string }
+/** Publishes a new status for one detail by its index in the request's `details` array. */
 export interface RequestDetailStatusUpdate {
   index: number;
   status: DetailState;
@@ -114,28 +122,34 @@ export interface RequestDetailStatusUpdate {
   message?: string;
   properties?: Record<string, unknown>;
 }
+/** Marks the request finished; `status` is restricted to the actual terminal states (no `RECOVERY`, which is not itself terminal). */
 export interface RequestTerminalUpdate {
   status: Extract<RequestState, 'SUCCEEDED' | 'ABORTED' | 'CANCELED'>;
   reason?: StatusReason;
   message?: string;
 }
 
+/** A {@link RequestDetail} with its `properties` narrowed to the action's own payload shape `P`. */
 export type TypedRequestDetail<P = Record<string, unknown>> =
   Omit<RequestDetail, 'properties'> & { properties: P };
 
+/** Terminal outcome an {@link ActionHandler} returns (via `ctx.succeeded`/`ctx.aborted`) for one action. */
 export type ActionResult =
   | { outcome: 'succeeded'; properties?: Record<string, unknown> }
   | { outcome: 'aborted'; reason: StatusReason; message?: string };
 
+/** Handed to an {@link ActionHandler}: the executing entity, the request being served, a cancellation signal, and helpers to report progress/finish the action. */
 export interface ActionContext {
   readonly entity: import('./entityHandle.js').EntityHandle;
   readonly request: Request;
   readonly signal: AbortSignal;
+  /** Publishes an EXECUTING detail-status update carrying arbitrary vendor properties, without changing lifecycle state. */
   progress(properties: Record<string, unknown>): void;
   succeeded(properties?: Record<string, unknown>): ActionResult;
   aborted(reason: StatusReason, message?: string): ActionResult;
 }
 
+/** User-supplied implementation of one action type, registered via `EntityHandle.onRequest`. */
 export type ActionHandler<P = Record<string, unknown>> =
   (action: TypedRequestDetail<P>, ctx: ActionContext) => Promise<ActionResult>;
 

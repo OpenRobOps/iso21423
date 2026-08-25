@@ -8,6 +8,7 @@ import type { StatusReason } from './types.js';
  *  the sender is what actually disambiguates. */
 export interface RequestKey { source: Uuid; sequenceId: number }
 
+/** What an {@link ExecutionPolicy} decides to do with a newly-arrived request against the currently-active ones. */
 export type AdmissionDecision =
   | { action: 'accept' }
   | { action: 'reject'; reason: StatusReason }
@@ -31,7 +32,9 @@ const priorityOf = (r: { priority?: number }): number => r.priority ?? DEFAULT_P
 // mirrored back, decision 5).
 const keyOf = (s: RequestStatus): RequestKey => ({ source: s.destination, sequenceId: s.requestSequenceId });
 
+/** Named C.2.2 execution policy presets. */
 export const policies = {
+  /** Only one active request at a time; any new request while one is active is rejected outright (no buffering). */
   abortNew(): ExecutionPolicy {
     return {
       admit: (_pending, active) =>
@@ -48,6 +51,7 @@ export const policies = {
     return policy;
   },
 
+  /** One active request; unlimited FIFO queueing behind it. */
   queueAfter(): ExecutionPolicy {
     const policy: ExecutionPolicy = {
       admit: (_pending, active) => (active.length === 0 ? { action: 'accept' } : { action: 'buffer' }),
@@ -56,6 +60,7 @@ export const policies = {
     return policy;
   },
 
+  /** Up to `max` concurrently active requests (unbounded by default); beyond that, buffer FIFO. */
   parallel(max = Number.POSITIVE_INFINITY): ExecutionPolicy {
     const policy: ExecutionPolicy = {
       admit: (_pending, active) => (active.length < max ? { action: 'accept' } : { action: 'buffer' }),
@@ -64,6 +69,7 @@ export const policies = {
     return policy;
   },
 
+  /** A pending request with strictly lower `priority` (Table C.1: lower number = higher priority) than every active request preempts all of them; otherwise it buffers, and the buffer drains by priority. */
   priority(): ExecutionPolicy {
     const policy: ExecutionPolicy = {
       admit: (pending, active) => {

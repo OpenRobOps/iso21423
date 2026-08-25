@@ -4,6 +4,7 @@ import type { Iso21423Session, TopicMeta } from '../session/session.js';
 import { validateMessage } from '../schema/validators.js';
 import { ROOT_NAMESPACE, LOST_CONNECTION_STATE } from '../types/constants.js';
 
+/** One entity's known-state snapshot in the {@link EntityCache}. */
 export interface EntityCatalogEntry {
   entityUuid: Uuid;
   entityType: string;
@@ -15,6 +16,7 @@ export interface EntityCatalogEntry {
   lastSeen: Date;
 }
 
+/** Public read/observe surface over the discovered-entity catalog. */
 export interface EntityCatalog {
   entities(): EntityCatalogEntry[];
   get(uuid: Uuid): EntityCatalogEntry | undefined;
