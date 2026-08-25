@@ -1,11 +1,10 @@
-import type { IsoTimestamp, Uuid } from './common.js';
-
-export const IMRFM_OPERATING_STATES = ['READY', 'NOT_READY', 'OFFLINE'] as const;
-
-export type ImrfmOperatingState = (typeof IMRFM_OPERATING_STATES)[number];
+import type { Uuid, IsoTimestamp } from './common.js';
+import type { OperatingState } from './constants.js';
+import type { Capabilities } from './identity.js';
 
 export interface EntityStatus {
-  entityId: Uuid;
+  entityId: Uuid;                      // schema name; clause tables say "id" (spec §3.1)
   timestamp: IsoTimestamp;
-  states: string[];
+  states: OperatingState[];            // mode first, then states by priority
+  disabledCapabilities?: Capabilities;
 }
