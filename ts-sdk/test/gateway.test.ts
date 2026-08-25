@@ -92,8 +92,10 @@ describe('FleetGateway', () => {
       destination: '', destinationType: 'IMRFM', requireCapability: false, details: [move(target)],
     });
     await expect(req.completion()).rejects.toThrow();
+    // ND-10: the sender's retained-request auto-clear lands after the terminal status; select the status topic explicitly.
     const status = JSON.parse(
-      broker.messagesUnder(`/ISO_21423/v1/IMRFM/${FLEET}/request/`).at(-1)!.payload.toString(),
+      broker.messagesUnder(`/ISO_21423/v1/IMRFM/${FLEET}/request/`)
+        .filter((m) => m.topic.endsWith('/status') && m.payload.length > 0).at(-1)!.payload.toString(),
     ) as { status: string; detailStatuses: Array<{ status: { reason?: string } }> };
     expect(status.status).toBe('ABORTED');
     expect(status.detailStatuses[0]!.status.reason).toBe('REJECTED');
