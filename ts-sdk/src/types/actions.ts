@@ -37,18 +37,13 @@ function detail(type: string, properties: Record<string, unknown>, opts: Builder
   };
 }
 
-/** Builds a `move` action detail. */
 export const move = (props: MoveProps, opts?: BuilderOpts): RequestDetail =>
   detail('move', { ...props }, opts);
-/** Builds a `pauseImr` action detail. */
 export const pauseImr = (opts?: BuilderOpts): RequestDetail => detail('pauseImr', {}, opts);
-/** Builds a `resumeImr` action detail. */
 export const resumeImr = (opts?: BuilderOpts): RequestDetail => detail('resumeImr', {}, opts);
 /** Builds a `cancelRequest` action detail targeting a previously-sent request/action by id. */
 export const cancelRequest = (props: CancelProps, opts?: BuilderOpts): RequestDetail =>
   detail('cancelRequest', { ...props }, opts);
-/** Builds a `dock` action detail. */
 export const dock = (props: DockProps, opts?: BuilderOpts): RequestDetail =>
   detail('dock', { ...props }, opts);
-/** Builds an `undock` action detail. */
 export const undock = (opts?: BuilderOpts): RequestDetail => detail('undock', {}, opts);
