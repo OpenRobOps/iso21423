@@ -2,6 +2,7 @@ import type { Uuid, IsoTimestamp } from './common.js';
 import type { EntityType } from './constants.js';
 import type { Point } from './ccs.js';
 
+/** What an entity can do and, for fleet managers, which robots it manages (or, for a managed robot, who manages it). */
 export interface Capabilities {
   provides: string[];
   accepts: { requests: string[] };
@@ -17,6 +18,7 @@ export interface SupportVendorContactInformation {
   name: string; phone?: string; address?: string; email?: string;
 }
 
+/** Identity payload for an IMR (the robot itself). */
 export interface ImrDetails {
   imrModel: string;
   imrSerialNumber: string;
@@ -39,6 +41,7 @@ export interface ImrDetails {
   additionalProperties?: AdditionalProperty[];
 }
 
+/** Identity payload for an IMRFM (fleet manager). */
 export interface ImrfmDetails {
   softwareVersions: SoftwareVersion[];
   imrfmModel?: string;
@@ -47,6 +50,7 @@ export interface ImrfmDetails {
   imrfmDocumentation?: string;
 }
 
+/** Wire shape of the retained identity message an entity publishes on connect. */
 export interface EntityIdentity {
   id: Uuid;
   timestamp: IsoTimestamp;

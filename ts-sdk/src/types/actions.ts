@@ -25,6 +25,7 @@ export interface DockProps {
 
 interface BuilderOpts { blocking?: boolean; atomic?: boolean; version?: string }
 
+/** Assembles a {@link RequestDetail}, filling in `format`/`version`/`blocking`/`atomic` defaults. */
 function detail(type: string, properties: Record<string, unknown>, opts: BuilderOpts = {}): RequestDetail {
   return {
     type,
@@ -40,6 +41,7 @@ export const move = (props: MoveProps, opts?: BuilderOpts): RequestDetail =>
   detail('move', { ...props }, opts);
 export const pauseImr = (opts?: BuilderOpts): RequestDetail => detail('pauseImr', {}, opts);
 export const resumeImr = (opts?: BuilderOpts): RequestDetail => detail('resumeImr', {}, opts);
+/** Builds a `cancelRequest` action detail targeting a previously-sent request/action by id. */
 export const cancelRequest = (props: CancelProps, opts?: BuilderOpts): RequestDetail =>
   detail('cancelRequest', { ...props }, opts);
 export const dock = (props: DockProps, opts?: BuilderOpts): RequestDetail =>

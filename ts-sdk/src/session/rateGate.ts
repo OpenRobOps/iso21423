@@ -18,6 +18,7 @@ export class RateGate {
     this.intervalMs = 1000 / maxHz;
   }
 
+  /** Offers a value for emission; emits now if the interval has elapsed, else schedules a trailing emit and discards any previously-pending value. */
   offer<T>(value: T, emit: (v: T) => void): void {
     const now = Date.now();
     if (now - this.lastEmit >= this.intervalMs) {
@@ -40,6 +41,7 @@ export class RateGate {
     }
   }
 
+  /** Cancels any pending trailing emit. The pending value is dropped, not flushed. */
   dispose(): void {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;

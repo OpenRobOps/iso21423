@@ -29,7 +29,9 @@ describe('connect conformance', () => {
     const transport = broker.createTransport();
     await Iso21423Session.connect({ transport, entity: IMR });
     transport.dropConnection();
-    await new Promise((r) => setImmediate(r));
+    // The will fires synchronously inside dropConnection() (broker.disconnected() -> route()).
+    // Checked before any tick: MemoryTransport's auto-reconnect (next setImmediate) would
+    // otherwise also run and immediately clear this same topic (the reconnect-clear fix below).
     expect(broker.retainedOn(DISC_TOPIC)?.toString()).toBe('{"states":["LOST_CONNECTION"]}');
   });
 });
@@ -65,7 +67,7 @@ describe('publishResource', () => {
     const broker = new MemoryBroker();
     let statusPublishCallCount = 0;
     const failingTransport = new Proxy(broker.createTransport(), {
-      get: (target, prop) => {
+      get: (target, prop, receiver) => {
         if (prop === 'publish') {
           return async (topic: string, payload: string | Buffer, opts: { qos: 0 | 1 | 2; retain: boolean }) => {
             if (topic === STATUS_TOPIC) {
@@ -74,10 +76,10 @@ describe('publishResource', () => {
                 throw new Error('simulated publish failure');
               }
             }
-            return (target as any)[prop](topic, payload, opts);
+            return Reflect.get(target, prop, receiver).call(target, topic, payload, opts);
           };
         }
-        return (target as any)[prop];
+        return Reflect.get(target, prop, receiver);
       },
     });
     const s = await Iso21423Session.connect({ transport: failingTransport, entity: IMR });

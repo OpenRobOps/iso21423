@@ -1,0 +1,37 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+defaults:
+  run:
+    working-directory: ts-sdk
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ts-sdk/.nvmrc
+          cache: npm
+          cache-dependency-path: ts-sdk/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@openrobops'
+      - run: npm ci
+      - name: Tag must match package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          test "$TAG" = "$PKG" || { echo "tag $TAG != package version $PKG"; exit 1; }
+      - run: npm test
+      - run: npm run build
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

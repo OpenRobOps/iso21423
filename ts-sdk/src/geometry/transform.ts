@@ -1,8 +1,14 @@
 import type { Point } from '../types/ccs.js';
 import { Iso21423Error } from '../errors.js';
 
+/** 2D rotation + translation: rotate by `rotation` radians, then translate by `(tx, ty)`. */
 export interface RigidTransform2D { rotation: number; tx: number; ty: number }
 
+/**
+ * Least-squares best-fit rigid transform mapping `from` points onto `to` points
+ * (Kabsch/Umeyama for the 2D rotation+translation case, no scaling).
+ * Requires at least 3 point pairs (Clause 4) and equal-length arrays; throws otherwise.
+ */
 export function fitTransform(from: Point[], to: Point[]): RigidTransform2D {
   if (from.length !== to.length) {
     throw new Iso21423Error('fitTransform: point lists must have the same number of points');
@@ -34,11 +40,13 @@ export function fitTransform(from: Point[], to: Point[]): RigidTransform2D {
   };
 }
 
+/** Applies the transform to a single point: rotate then translate. */
 export function applyTransform(t: RigidTransform2D, p: Point): Point {
   const cos = Math.cos(t.rotation), sin = Math.sin(t.rotation);
   return { x: cos * p.x - sin * p.y + t.tx, y: sin * p.x + cos * p.y + t.ty };
 }
 
+/** Returns the inverse transform (undoes {@link applyTransform}). */
 export function invertTransform(t: RigidTransform2D): RigidTransform2D {
   const cos = Math.cos(t.rotation), sin = Math.sin(t.rotation);
   return {

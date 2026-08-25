@@ -35,6 +35,7 @@ export function isTerminalRequestState(s: RequestState): boolean {
   return REQUEST_TRANSITIONS[s].length === 0;
 }
 
+/** Generic state machine driven by a transition table; starts at `initial` and rejects any move not listed for the current state. */
 class Lifecycle<S extends string> {
   #state: S;
   constructor(private readonly table: Record<S, readonly S[]>, initial: S) {
@@ -46,6 +47,7 @@ class Lifecycle<S extends string> {
   canTransition(to: S): boolean {
     return this.table[this.#state].includes(to);
   }
+  /** Moves to `to` if legal; throws {@link IllegalTransition} otherwise. */
   transition(to: S): void {
     if (!this.canTransition(to)) {
       throw new IllegalTransition(`illegal transition ${this.#state} → ${to}`);
@@ -57,10 +59,12 @@ class Lifecycle<S extends string> {
   }
 }
 
+/** Tracks a {@link Request}'s overall lifecycle per {@link REQUEST_TRANSITIONS}, starting at RECEIVED. */
 export class RequestLifecycle extends Lifecycle<RequestState> {
   constructor() { super(REQUEST_TRANSITIONS, 'RECEIVED'); }
 }
 
+/** Tracks a single request detail's lifecycle per {@link DETAIL_TRANSITIONS}, starting at RECEIVED. */
 export class DetailLifecycle extends Lifecycle<DetailState> {
   constructor() { super(DETAIL_TRANSITIONS, 'RECEIVED'); }
 }

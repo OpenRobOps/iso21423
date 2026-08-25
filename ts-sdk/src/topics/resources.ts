@@ -1,3 +1,4 @@
+/** Normative publish settings for a resource; `minHz`/`maxHz` bound the allowed publish rate where the spec constrains it. */
 export interface ResourceConfig { qos: 0 | 1 | 2; retain: boolean; minHz?: number; maxHz?: number }
 
 /** Table B.1 — resources and their normative QoS / retain / rate configuration. */
