@@ -19,7 +19,7 @@ import type { SequenceCounter } from './sequence.js';
 import type { EntityCache } from './entityCache.js';
 import type { DiagnosticCode } from './types.js';
 import { RequestHandle } from './requestHandle.js';
-import { RequestServer } from './requestServer.js';
+import { RequestServer, type DispatchInterceptor, type DispatchTarget } from './requestServer.js';
 import type { IncomingRequest } from './incomingRequest.js';
 import type { RequestAcceptanceFilter } from './filters.js';
 import { composeSubscription, type Subscription } from './subscription.js';
@@ -186,8 +186,7 @@ export class EntityHandle {
   async acceptRequests(
     filter: RequestAcceptanceFilter, handler: (req: IncomingRequest) => void,
   ): Promise<Subscription> {
-    if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
-    const server = this.#requestServer;
+    const server = this.ensureRequestServer();
     await server.ensureStarted();
     const deregister = server.register(filter, handler);
     const requestFilterTopic = `${this.ctx.session.topicFor(this.ctx.ref, 'request')}/+`;
@@ -217,12 +216,45 @@ export class EntityHandle {
   ): void {
     if (!this.#executor) {
       this.#executor = new ActionExecutor();
-      if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
-      this.#requestServer.setExecutor(this.#executor, this);
-      void this.#requestServer.ensureStarted()
+      const server = this.ensureRequestServer();
+      server.setExecutor(this.#executor, this);
+      void server.ensureStarted()
         .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
     }
     this.#executor.register(type, handler as ActionHandler, opts);
+  }
+
+  /**
+   * @internal — FleetGateway janitor seam (ND-10): `cb` fires with this handle's request topic
+   * whenever its `RequestServer` publishes a terminal status, or drops a duplicate/unroutable
+   * retained request. Force-creates and starts the `RequestServer` so the hook is live even
+   * before any `onRequest`/`acceptRequests` call.
+   */
+  async onRequestSettled(cb: (requestTopic: string) => void): Promise<void> {
+    const server = this.ensureRequestServer();
+    await server.ensureStarted();
+    server.setRequestSettledHook(cb);
+  }
+
+  /**
+   * @internal — FleetGateway dispatch seam (ND-12): wires the empty-destination interceptor onto
+   * this handle's `RequestServer` (the IMRFM handle, wired once at `FleetGateway.connect()`).
+   */
+  async setDispatchInterceptor(cb: DispatchInterceptor): Promise<void> {
+    const server = this.ensureRequestServer();
+    await server.ensureStarted();
+    server.setDispatchInterceptor(cb);
+  }
+
+  /** @internal — ND-12 retarget seam: this handle's executor, if an `onRequest` handler is
+   *  registered on it; used to hand a dispatched request off to a managed handle. */
+  dispatchTarget(): DispatchTarget | undefined {
+    return this.#executor ? { executor: this.#executor, entity: this } : undefined;
+  }
+
+  private ensureRequestServer(): RequestServer {
+    if (!this.#requestServer) this.#requestServer = new RequestServer(this.ctx);
+    return this.#requestServer;
   }
 
   /**

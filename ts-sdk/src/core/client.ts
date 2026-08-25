@@ -20,6 +20,7 @@ import type {
   ManagedEntityRegistration, RequestEvent, ResourceEvent, SecurityOptions,
 } from './types.js';
 import { DEFAULT_EXECUTION_POLICY } from './policies.js';
+import { publishSelfCheck } from '../gateway/selfCheck.js';
 
 // Lazy module-level singleton (brief: "a shared FileSequenceStore()") — two clients in one
 // process share the same write queue instead of racing separate ones against the same file.
@@ -413,20 +414,10 @@ export class Iso21423Client {
     for (const handle of [...this.inFlightRequests]) handle.failFast();
   }
 
-  /** Minimal identity-echo publish self-check (ND-15): confirms our own retained identity round-trips. */
+  /** Identity-echo publish self-check (ND-15): confirms our own retained identity round-trips.
+   *  Shares its implementation with FleetGateway's self-check (default ON there, OFF here). */
   private async runSelfCheck(handle: EntityHandle): Promise<void> {
-    const timeoutMs = this.security?.selfCheckTimeoutMs ?? 2000;
-    const topic = this.session!.topicFor(handle.ctx.ref, 'identity');
-    const seen = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), timeoutMs);
-      this.session!.subscribeTopic(topic, null, () => {
-        clearTimeout(timer);
-        resolve(true);
-      }, { qos: 1 }).then((sub) => {
-        void sub.unsubscribe();
-      }).catch(() => resolve(false));
-    });
-    if (!seen) this.diagnostic('self-check-failed');
+    await publishSelfCheck(this.session!, handle.ctx.ref, this.security?.selfCheckTimeoutMs);
   }
 
   private diagnostic(code: DiagnosticCode, detail?: unknown): void {

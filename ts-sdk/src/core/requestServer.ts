@@ -1,5 +1,5 @@
 import type { EntityContext } from './entityHandle.js';
-import { requestStatusTopic } from '../topics/topics.js';
+import { requestStatusTopic, requestTopic } from '../topics/topics.js';
 import { RESOURCE_CONFIG } from '../topics/resources.js';
 import type { TopicMeta, SessionSubscription } from '../session/session.js';
 import type { Request, RequestStatus } from '../types/requests.js';
@@ -13,6 +13,11 @@ import type { ActionExecutor } from './executor.js';
 import type { EntityHandle } from './entityHandle.js';
 
 interface Registration { filter: RequestAcceptanceFilter; handler: (req: IncomingRequest) => void }
+
+/** @internal — FleetGateway dispatch seam (ND-12): resolves an empty-destination request to a
+ *  managed handle's executor, or null to reject it. */
+export interface DispatchTarget { executor: ActionExecutor; entity: EntityHandle }
+export type DispatchInterceptor = (request: Request) => DispatchTarget | null;
 
 interface PendingRequest {
   request: Request;
@@ -46,6 +51,10 @@ export class RequestServer {
   // Task 7: the executor is the fallback consumer once no acceptRequests filter matches — see
   // handleAcceptedRequest / the cancelRequest branch of handleInbound below.
   private executor?: { executor: ActionExecutor; entity: EntityHandle };
+  // Task 8 (FleetGateway) seams — both optional, set only by EntityHandle.setDispatchInterceptor /
+  // onRequestSettled when a gateway wires them; a plain client never touches either.
+  private dispatchInterceptor?: DispatchInterceptor;
+  private requestSettledHook?: (requestTopic: string) => void;
 
   constructor(private readonly ctx: EntityContext) {
     this.sink = {
@@ -68,6 +77,16 @@ export class RequestServer {
   /** @internal — EntityHandle.onRequest wires the executor in here once, the first time it's used. */
   setExecutor(executor: ActionExecutor, entity: EntityHandle): void {
     this.executor = { executor, entity };
+  }
+
+  /** @internal — EntityHandle.setDispatchInterceptor (ND-12, IMRFM handle only). */
+  setDispatchInterceptor(cb: DispatchInterceptor): void {
+    this.dispatchInterceptor = cb;
+  }
+
+  /** @internal — EntityHandle.onRequestSettled (ND-10 janitor feed). */
+  setRequestSettledHook(cb: (requestTopic: string) => void): void {
+    this.requestSettledHook = cb;
   }
 
   register(filter: RequestAcceptanceFilter, handler: (req: IncomingRequest) => void): () => void {
@@ -105,7 +124,8 @@ export class RequestServer {
     const dupKey = `${request.source}:${request.sequenceId}`;
     if (this.seen.has(dupKey)) {
       this.ctx.diagnostic('duplicate-request-ignored', { source: request.source, sequenceId: request.sequenceId });
-      return;                                              // point 4
+      this.requestSettledHook?.(meta.topic);                // ND-10: this retained topic will
+      return;                                               // never terminate on its own — point 4
     }
     this.seen.add(dupKey);
 
@@ -115,6 +135,21 @@ export class RequestServer {
     // publishReceived() has already entered this request in activeStatuses (admitted: false), so
     // it is on the wire in activeRequestsStatus but invisible to the admission view below — a
     // request never sees itself, or any other buffered request, as active.
+
+    // ND-12: the IMRFM's dispatch callback intercepts an empty-destination request before
+    // admission/cancellation semantics ever apply — a dispatched request is either handed
+    // straight to a managed handle's executor, or rejected outright.
+    if (this.dispatchInterceptor && request.destination === '') {
+      const target = this.dispatchInterceptor(request);
+      if (target) {
+        void target.executor.run(req, target.entity)
+          .catch((err) => this.ctx.diagnostic('dispatch-rejected', { reason: 'GENERAL_FAILURE', error: err }));
+      } else {
+        this.ctx.diagnostic('dispatch-rejected', { reason: 'REJECTED' });
+        await req.reject('REJECTED');
+      }
+      return;
+    }
 
     // D-02: a legacy `type: 'cancel'` detail is normalized to `cancelRequest` before anything
     // else inspects it.
@@ -161,7 +196,8 @@ export class RequestServer {
     const sequenceId = typeof obj?.sequenceId === 'number' ? obj.sequenceId : undefined;
     if (source === undefined || sequenceId === undefined) {
       this.ctx.session.reportValidationWarning({ topic, payload: raw, errors });
-      return;
+      this.requestSettledHook?.(topic);                     // ND-10: an unroutable retained
+      return;                                               // request can never terminate either
     }
     const minimal: Request = {
       destination: this.ctx.ref.entityUuid,
@@ -195,6 +231,7 @@ export class RequestServer {
     // Terminal requests leave the active map first, then the array is republished.
     if (isTerminalRequestState(status.status)) {
       this.activeStatuses.delete(req.requestUuid);
+      this.requestSettledHook?.(requestTopic(this.ctx.ref, req.requestUuid));
       // Re-admit pending requests after a terminal transition (async to avoid blocking publishStatus)
       // ponytail: async re-admit means buffered requests may see slight delay before handling;
       // upgrade to sync if buffering causes QoS issues under load.
