@@ -32,3 +32,22 @@ Build output goes to `dist/`.
 - `src/` — SDK source
 - `test/` — Vitest test suites
 - `dist/` — build output (generated, gitignored)
+
+## Installing (GitHub Packages)
+
+The package is published to GitHub Packages under `@openrobops`. Consumers add a scope mapping:
+
+```ini
+# .npmrc
+@openrobops:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+`GITHUB_TOKEN` needs `read:packages` — required even for public packages. Then:
+
+```sh
+npm install @openrobops/iso21423 mqtt
+```
+
+`mqtt@^5` is a peer dependency: install it alongside, or inject your own `MqttTransport`.
+Public npmjs publication is phase 2, at API stability (**ND-19**).

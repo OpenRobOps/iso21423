@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule: [{ cron: '0 3 * * *' }]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: ts-sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ts-sdk/.nvmrc
+          cache: npm
+          cache-dependency-path: ts-sdk/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: CommonJS consumability (ORO constraint)
+        run: node -e "const s=require('./dist/index.cjs'); if (typeof s.Iso21423Client.connect !== 'function') process.exit(1)"
+      - name: ESM consumability
+        run: node --input-type=module -e "import { FleetGateway } from './dist/gateway.js'; if (typeof FleetGateway.connect !== 'function') process.exit(1)"
+
+  # Optional smoke test against a real broker. Not required for merge: the conformance/e2e suite
+  # is Plan 3 (testing_strategy.md §3). Runs nightly and on demand.
+  live-broker:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ts-sdk/.nvmrc
+          cache: npm
+          cache-dependency-path: ts-sdk/package-lock.json
+      - name: Start Mosquitto
+        run: |
+          docker run -d --name mosquitto -p 1883:1883 \
+            -v "$GITHUB_WORKSPACE/.github/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf" \
+            eclipse-mosquitto:2
+        working-directory: .
+      - run: npm ci
+      - run: npm run test:live
+        env:
+          ISO21423_BROKER_URL: mqtt://127.0.0.1:1883
