@@ -20,7 +20,7 @@ import type {
   ManagedEntityRegistration, RequestEvent, ResourceEvent, SecurityOptions,
 } from './types.js';
 import { DEFAULT_EXECUTION_POLICY } from './policies.js';
-import { publishSelfCheck } from '../gateway/selfCheck.js';
+import { publishSelfCheck } from './selfCheck.js';
 
 // Lazy module-level singleton (brief: "a shared FileSequenceStore()") — two clients in one
 // process share the same write queue instead of racing separate ones against the same file.

@@ -61,6 +61,8 @@ export class FleetGateway {
   private constructor(
     readonly client: Iso21423Client,
     readonly imrfm: EntityHandle,
+    private readonly selfCheckEnabled: boolean,
+    private readonly selfCheckTimeoutMs: number | undefined,
   ) {}
 
   static async connect(opts: FleetGatewayOptions): Promise<FleetGateway> {
@@ -87,10 +89,11 @@ export class FleetGateway {
       capabilities: { provides: opts.imrfm.provides ?? [], accepts: opts.imrfm.accepts ?? [] },
     });
 
-    const gateway = new FleetGateway(client, imrfm);
+    const gateway = new FleetGateway(
+      client, imrfm, opts.security?.selfCheck !== false, opts.security?.selfCheckTimeoutMs);
 
-    if (opts.security?.selfCheck !== false) {
-      await publishSelfCheck(imrfm.ctx.session, imrfm.ctx.ref, opts.security?.selfCheckTimeoutMs);
+    if (gateway.selfCheckEnabled) {
+      await publishSelfCheck(imrfm.ctx.session, imrfm.ctx.ref, gateway.selfCheckTimeoutMs);
     }
 
     if (opts.janitor?.enabled !== false) {
@@ -121,6 +124,23 @@ export class FleetGateway {
     for (const [type, handler] of this.fleetHandlers) handle.onRequest(type, handler, { override: true });
 
     this.imrHandles.set(reg.id, handle);
+
+    if (this.selfCheckEnabled) {
+      try {
+        await publishSelfCheck(handle.ctx.session, handle.ctx.ref, this.selfCheckTimeoutMs);
+      } catch (err) {
+        // Rollback (best-effort, local only): nothing is retained on the broker to clean up — a
+        // denied publish never lands there in the first place (that's the whole point of ND-15)
+        // — so undoing our own bookkeeping (the handle list and the manager's manages array) is
+        // all there is to do before rethrowing.
+        this.imrHandles.delete(reg.id);
+        const identity = this.imrfm.identity();
+        const manages = (identity.capabilities.manages ?? []).filter((uuid) => uuid !== reg.id);
+        await this.imrfm.updateIdentity({ capabilities: { ...identity.capabilities, manages } });
+        throw err;
+      }
+    }
+
     return handle;
   }
 
@@ -165,6 +185,9 @@ export class FleetGateway {
     }
     this.fleetHandlers.set(type, asHandler);
     this.imrfm.onRequest(type, asHandler, { override: true });
+    // Registration order matters: this replay always uses override:true, so a fleet-wide
+    // registration made AFTER a per-imr override for the same type replaces that override on
+    // every current robot (a later per-imr call would still win back on that one robot).
     for (const handle of this.imrHandles.values()) handle.onRequest(type, asHandler, { override: true });
   }
 

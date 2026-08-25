@@ -247,7 +247,9 @@ export class EntityHandle {
   }
 
   /** @internal — ND-12 retarget seam: this handle's executor, if an `onRequest` handler is
-   *  registered on it; used to hand a dispatched request off to a managed handle. */
+   *  registered on it; used to hand a dispatched request off to a managed handle. A valid,
+   *  registered robot with no `onRequest` handler yields `undefined` here too — the dispatch
+   *  callback rejects it the same as an unknown uuid (there is nothing to run the request). */
   dispatchTarget(): DispatchTarget | undefined {
     return this.#executor ? { executor: this.#executor, entity: this } : undefined;
   }

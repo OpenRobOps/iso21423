@@ -152,4 +152,13 @@ describe('FleetGateway', () => {
     expect(g.imrfm.entityType).toBe('IMRFM');
     expect(typeof g.client.health).toBe('function');
   });
+
+  it('registerImr rolls back when the broker silently drops the robot identity publish (ND-15 self-check)', async () => {
+    const broker = new MemoryBroker();
+    const g = await gateway(broker);
+    broker.denySubscribe(ns('IMR', IMR_A, 'identity'));
+    await expect(g.registerImr({ id: IMR_A, manufacturerName: 'Acme', accepts: ['move'] }))
+      .rejects.toThrow(AuthorizationDenied);
+    expect(g.imrs().map((h) => h.entityUuid)).not.toContain(IMR_A);
+  });
 });
