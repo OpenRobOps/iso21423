@@ -148,6 +148,15 @@ export class EntityHandle {
   }
 
   /**
+   * Publishes a deployment-defined resource previously declared with `registerExtensionResource`
+   * (throws for an undeclared name). No schema applies: `payload` is JSON-serialized as given, so
+   * include your own `timestamp` if the resource needs one.
+   */
+  async publishExtension(resource: string, payload: unknown): Promise<void> {
+    await this.publish(resource, payload);
+  }
+
+  /**
    * Sends a request to `cmd.destination` (or resolves an empty destination via
    * {@link resolveDestRef}, R3). Unless `requireCapability: false`, checks the destination's
    * known `accepts` capability list first and throws {@link NotCapableError} for any detail type
