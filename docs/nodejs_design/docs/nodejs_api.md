@@ -32,7 +32,7 @@ One npm package, `@openrobops/iso21423`, with subpath exports (**ND-02**, **ND-1
 @openrobops/iso21423
 ├── /types      Generated + hand-refined TS types, enums, constants
 ├── /schema     Annex A JSON Schema (bundled, ND-03) + runtime validators (ajv)
-├── /topics     Topic builder/parser, per-resource QoS/retain registry (Table B.1)
+├── /topics     Topic builder/parser, per-resource QoS/retain registry (Table B.1) + registerExtensionResource()
 ├── /geometry   CCS transforms (Annex D least-squares fit), point/pose utilities
 ├── /session    Conformant MQTT session (LWT, persistent, keep-alive, publish rules)
 ├── /core       Iso21423Client, EntityHandle, RequestHandle, IncomingRequest,
@@ -250,6 +250,8 @@ class EntityHandle {
   publishLocalTrajectory(sample: LocalTrajectory): Promise<void>;
   publishGlobalPath(snapshot: GlobalPath): Promise<void>;
   publishGlobalPlan(snapshot: GlobalPlan): Promise<void>;
+  /** Deployment-defined resource declared via registerExtensionResource(); no schema, raw JSON. */
+  publishExtension(resource: string, payload: unknown): Promise<void>;
 
   // Requester side (D-09): sequenceId assigned internally (D-15)
   sendRequest(cmd: RequestCommand): Promise<RequestHandle>;
