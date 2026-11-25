@@ -2,7 +2,8 @@
 
 _Status legend: **[Settled]** agreed in design sessions; **[Proposed]** recommended, open for team
 discussion. For decisions shared with the C++ register: **[Adopted]** taken as-is;
-**[Adopted ±]** taken with a documented Node-specific divergence; **[N/A]** language-specific to C++._
+**[Adopted ±]** taken with a documented Node-specific divergence; **[N/A]** language-specific to C++; **[Pending]** settled in the C++ register (first built in the
+Python SDK), not yet adopted by the Node SDK._
 
 This register is the single source of truth for the NodeJS SDK design. It supersedes the earlier
 prose spec (`docs/superpowers/specs/2026-07-27-iso21423-sdk-design.md`, now absorbed here and into
@@ -97,6 +98,8 @@ silent.
   `queue-replace`, `queue-after`, `parallel(max)`, `priority`) ship as presets built on it.
   _Supersedes the earlier Node draft default of `abort-new`; aligned with the C++ register for
   cross-SDK consistency._
+- **D-21 [Pending]** `preempt()` policy (C.2.2 strategy 2): not yet in the Node SDK; adopted in a separate change.
+- **D-22 [Pending]** `pauseImr`/`resumeImr` bypass admission like `cancelRequest`: not yet in the Node SDK; adopted in a separate change.
 
 ## Shared decisions — observers & subscriptions
 

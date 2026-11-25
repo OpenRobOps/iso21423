@@ -29,11 +29,17 @@ robot = client.register_self_entity(
 
 robot.publish_status(["MODE_AUTO", "IDLE"])
 robot.publish_battery_status({"batterySoc": 0.82, "batteryChargingState": "DISCHARGING"})
-robot.publish_odometry({"pose": {...}, "velocity": {"linear": 0.5, "angular": 0}})
+CCS_ID = "9c0f6a52-3e1b-4d6a-9a77-0b5c2d8e4f11"  # the facility coordinate system
+robot.publish_odometry({
+    "pose": {"locationPoint": {"ccsId": CCS_ID, "x": 12.4, "y": 8.1, "z": 0},
+             "orientation": {"yaw": 1.57, "pitch": 0, "roll": 0}},
+    "velocity": {"linear": 0.5, "angular": 0},
+})
 
 # Handlers are blocking functions; the SDK runs them on worker threads and handles
 # RECEIVED/ACCEPTED/EXECUTING/terminal statuses for you.
 def on_move(action: dict, ctx):
+    # `nav` stands for your own navigation stack
     while not nav.go_to(action["properties"]["location"]):
         if ctx.cancelled.is_set():          # threading.Event, set on cancel
             return ctx.aborted("REJECTED", "cancelled")
@@ -42,3 +48,21 @@ def on_move(action: dict, ctx):
 
 robot.on_request("move", on_move)
 ```
+
+## Behaviour notes
+
+- `preempt()` and `priority()` start the new request as soon as the old one is *signalled*; they do
+  not wait for the old handler to return (TS parity). Handlers must therefore honour `ctx.cancelled`
+  promptly, or the old and new handlers briefly run side by side.
+- A `cancelRequest` that arrives before its target run is registered is **rejected**, not queued (TS parity).
+
+## Differences from the TS SDK
+
+The library default policy is still `parallel()` (D-17). Two deliberate divergences, recorded in the
+[C++/shared decision register](../docs/cpp_design/docs/decision_register.md); the TS SDK adopts both in a
+separate change (marked `[Pending]` in the [Node register](../docs/nodejs_design/docs/decision_register.md)):
+
+1. **`policies.preempt()`** (C.2.2 strategy 2, **D-21**): a new request cancels every admitted request,
+   then runs. New here; `queue_replace()` keeps the TS meaning (one active plus one queued slot).
+2. **pause/resume bypass admission** (**D-22**): a request made only of `pauseImr` / `resumeImr` details
+   is executed but never admitted, exactly like `cancelRequest`, so the policy can neither refuse nor preempt it.

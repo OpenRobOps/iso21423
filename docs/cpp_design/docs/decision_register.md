@@ -62,6 +62,14 @@ conflicting notes in earlier design drafts (the older "API Revision v2" ideas `q
   in the payload for optional introspection.
 - **D-17 [Settled]** Default request execution is parallel-capable with a configurable runtime policy
   (serialize / buffer / preempt / priority).
+- **D-21 [Settled]** `preempt()` execution policy = C.2.2 strategy 2: a new request preempts (cancels)
+  every admitted request, then runs. Distinct from `queue_replace()` (one active plus one queued slot,
+  as in the TS SDK). First implemented in the Python SDK (`py-sdk`); the TS SDK adopts it in a
+  separate change.
+- **D-22 [Settled]** Requests whose details are all `pauseImr` / `resumeImr` bypass admission, like
+  `cancelRequest`: they are executed (handler runs) but never marked admitted, so they neither count
+  against nor are refused by the execution policy. First implemented in the Python SDK; the TS SDK
+  adopts it in a separate change.
 
 ## Observers & subscriptions
 

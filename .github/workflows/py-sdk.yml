@@ -3,9 +3,9 @@ name: py-sdk
 on:
   push:
     branches: [main]
-    paths: ['py-sdk/**', 'ts-sdk/src/schema/**', '.github/workflows/py-sdk.yml']
+    paths: ['py-sdk/**', 'ts-sdk/src/**', '.github/workflows/py-sdk.yml']
   pull_request:
-    paths: ['py-sdk/**', 'ts-sdk/src/schema/**', '.github/workflows/py-sdk.yml']
+    paths: ['py-sdk/**', 'ts-sdk/src/**', '.github/workflows/py-sdk.yml']
   workflow_dispatch:
 
 defaults:
@@ -44,5 +44,38 @@ jobs:
             sleep 1
           done
       - run: pytest -m "not interop" -p no:cacheprovider -o addopts=""
+        env:
+          ISO21423_TEST_BROKER: mqtt://localhost:1883
+
+  interop:
+    runs-on: ubuntu-latest
+    services:
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports: ['1883:1883']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the TS SDK
+        working-directory: ts-sdk
+        run: npm ci && npm run build
+      - run: pip install -e '.[test]'
+      - name: Configure the broker (the image only listens on localhost by default)
+        working-directory: .
+        run: |
+          printf 'listener 1883\nallow_anonymous true\n' > /tmp/mosquitto.conf
+          docker cp /tmp/mosquitto.conf "$(docker ps -qf ancestor=eclipse-mosquitto:2)":/mosquitto/config/mosquitto.conf
+          docker restart "$(docker ps -qf ancestor=eclipse-mosquitto:2)"
+          for i in $(seq 30); do
+            docker exec "$(docker ps -qf ancestor=eclipse-mosquitto:2)" \
+              mosquitto_sub -h localhost -t '$SYS/broker/version' -C 1 -W 2 && break
+            sleep 1
+          done
+      - run: pytest -m interop -v -p no:cacheprovider -o addopts=""
         env:
           ISO21423_TEST_BROKER: mqtt://localhost:1883
