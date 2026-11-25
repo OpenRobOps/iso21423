@@ -19,7 +19,7 @@
 
 ## Global Constraints
 
-- **Location:** new local git repo `/home/herchu/inorbit/openrobops/iso21423_ros`. It holds the ROS package `iso21423_ros` at repo root (single-package repo) and Python module `iso21423_ros/`. **Creating the GitHub remote `OpenRobOps/iso21423_ros` is outward-facing: ask the user first. No task pushes.**
+- **Location:** new local git repo `../iso21423_ros` (a sibling checkout of this repo). It holds the ROS package `iso21423_ros` at repo root (single-package repo) and Python module `iso21423_ros/`. **Creating the GitHub remote `OpenRobOps/iso21423_ros` is outward-facing: ask the user first. No task pushes.**
 - **Library API (Plan 1, exact):**
   - `from iso21423 import Client, EntityHandle, ActionContext, ActionResult, policies, ResourceConfig, register_extension_resource, fit_transform, apply_transform, invert_transform, transform_yaw, RigidTransform2D, now_timestamp, Iso21423Error`
   - `Client.connect(url, username=, password=, tls=)`
@@ -63,7 +63,7 @@
 ### Task 1: Repo scaffold, dev image, config model, hook loader
 
 **Files:**
-- Create in `/home/herchu/inorbit/openrobops/iso21423_ros/`:
+- Create in `../iso21423_ros/`:
   - `package.xml` (format 3; `exec_depend`: rclpy, tf2_ros, nav2_msgs, geometry_msgs, nav_msgs, sensor_msgs, std_msgs, python3-paho-mqtt, python3-jsonschema; `test_depend`: python3-pytest, launch_testing)
   - `setup.py`, `setup.cfg`, `resource/iso21423_ros`, `.gitignore`, `LICENSE` (copy the iso21423 repo's license file)
   - `README.md` (stub, filled in Task 8)
@@ -389,7 +389,7 @@ Ports the logic of `flatland/iso-agent/src/main.js` (`fetchBrokerConfig`, custom
 
 ### Task 10: Flatland migration and OpenRobOps docs
 
-Work on a new branch `iso21423-ros-connector` in `/home/herchu/inorbit/openrobops/flatland` and in `/home/herchu/inorbit/openrobops/oro`. No pushes.
+Work on a new branch `iso21423-ros-connector` in the sibling checkouts `../flatland` and `../oro`. No pushes.
 
 **Files:**
 - **flatland:**
