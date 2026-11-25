@@ -19,7 +19,7 @@
 
 ## Global Constraints
 
-- **Location:** new local git repo `../iso21423_ros` (a sibling checkout of this repo). It holds the ROS package `iso21423_ros` at repo root (single-package repo) and Python module `iso21423_ros/`. **Creating the GitHub remote `OpenRobOps/iso21423_ros` is outward-facing: ask the user first. No task pushes.**
+- **Location:** the repo `OpenRobOps/iso21423_ros`, checked out as the sibling `../iso21423_ros`, with work on branch `connector-v1` (a PR into `main`). It holds the ROS package `iso21423_ros` at repo root (single-package repo) and Python module `iso21423_ros/`. Tasks commit on `connector-v1`; the controller pushes the branch and opens the PR at the end.
 - **Library API (Plan 1, exact):**
   - `from iso21423 import Client, EntityHandle, ActionContext, ActionResult, policies, ResourceConfig, register_extension_resource, fit_transform, apply_transform, invert_transform, transform_yaw, RigidTransform2D, now_timestamp, Iso21423Error`
   - `Client.connect(url, username=, password=, tls=)`
@@ -121,7 +121,7 @@ def test_load_class_ok(): assert load_class("collections:OrderedDict", "k").__na
 - [ ] **Step 2: Run** `scripts/test.sh`. Expected: FAIL (import errors).
 - [ ] **Step 3: Implement.** `password_file` and `api_key_file` are paths whose contents are read at startup (Task 7). The config only stores the path.
 - [ ] **Step 4: Run** `scripts/test.sh`. Expected: PASS.
-- [ ] **Step 5: Commit.** Run `git init` in the new repo first, then `git commit -m "iso21423_ros: scaffold, dev image, config model, hook loader"`.
+- [ ] **Step 5: Commit.** `git commit -m "iso21423_ros: scaffold, dev image, config model, hook loader"`.
 
 ### Task 2: CCS frame and pure ROS→ISO mappings
 
@@ -384,7 +384,7 @@ Ports the logic of `flatland/iso-agent/src/main.js` (`fetchBrokerConfig`, custom
   - `test_preempt_new_move`: the second move succeeds and the first ends CANCELED.
 - [ ] **Step 2: Run** `scripts/sim_test.sh`. Expected: PASS. Fix connector bugs it reveals, with unit tests where possible.
 - [ ] **Step 3: Run** `ROS_DISTRO=humble scripts/test.sh`. Expected: PASS, with dock tests skipped.
-- [ ] **Step 4: Validate the workflow YAML parses.** Don't push.
+- [ ] **Step 4: Validate the workflow YAML parses.** The controller pushes `connector-v1` at the end of the plan, so CI runs on the PR.
 - [ ] **Step 5: Commit** `git commit -m "iso21423_ros: simulation integration tests and CI"`
 
 ### Task 10: Flatland migration and OpenRobOps docs
