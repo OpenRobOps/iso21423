@@ -37,7 +37,12 @@ jobs:
           printf 'listener 1883\nallow_anonymous true\n' > /tmp/mosquitto.conf
           docker cp /tmp/mosquitto.conf "$(docker ps -qf ancestor=eclipse-mosquitto:2)":/mosquitto/config/mosquitto.conf
           docker restart "$(docker ps -qf ancestor=eclipse-mosquitto:2)"
-          for i in $(seq 30); do (echo > /dev/tcp/localhost/1883) 2>/dev/null && break; sleep 1; done
+          # a TCP probe is not enough: docker-proxy accepts before mosquitto listens, so do an MQTT round trip
+          for i in $(seq 30); do
+            docker exec "$(docker ps -qf ancestor=eclipse-mosquitto:2)" \
+              mosquitto_sub -h localhost -t '$SYS/broker/version' -C 1 -W 2 && break
+            sleep 1
+          done
       - run: pytest -m "not interop" -p no:cacheprovider -o addopts=""
         env:
           ISO21423_TEST_BROKER: mqtt://localhost:1883

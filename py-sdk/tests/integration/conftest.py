@@ -52,15 +52,15 @@ def broker(tmp_path_factory):
     conf.chmod(0o644)
     name = f"iso21423-test-{uuid.uuid4().hex[:8]}"
     try:
-        subprocess.run(["docker", "run", "-d", "--rm", "--name", name, "-p", f"127.0.0.1:{port}:1883",
-                        "-v", f"{conf}:/mosquitto/config/mosquitto.conf:ro", "eclipse-mosquitto:2"],
-                       check=True, capture_output=True, timeout=300)
-    except (OSError, subprocess.SubprocessError) as e:
-        pytest.skip(f"no broker: set ISO21423_TEST_BROKER or install docker ({e})")
-    try:
+        try:
+            subprocess.run(["docker", "run", "-d", "--rm", "--name", name, "-p", f"127.0.0.1:{port}:1883",
+                            "-v", f"{conf}:/mosquitto/config/mosquitto.conf:ro", "eclipse-mosquitto:2"],
+                           check=True, capture_output=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as e:
+            pytest.skip(f"no broker: set ISO21423_TEST_BROKER or install docker ({e})")
         _wait_port("127.0.0.1", port)
         yield Broker(f"mqtt://127.0.0.1:{port}", name)
-    finally:
+    finally:  # also reached when `docker run` timed out after creating the container
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 

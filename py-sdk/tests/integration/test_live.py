@@ -120,7 +120,7 @@ def test_will_published_on_ungraceful_disconnect(broker_url, robot, fleet_of):
     paho_client.reconnect_delay_set(30, 30)  # keep the retained will observable, don't clear it by reconnecting
     paho_client.socket().shutdown(socket.SHUT_RDWR)  # drop the TCP connection without DISCONNECT
     fleet.wait(lambda m: any(p for _, p in m), "will")
-    assert fleet.on("/disconnection")[-1] == {"states": ["LOST_CONNECTION"]}
+    assert fleet.on("/disconnection")[-1:] == [{"states": ["LOST_CONNECTION"]}]
     assert json.loads(retained(broker_url, f"{ROOT}/{uid}/disconnection")[0][1]) == {"states": ["LOST_CONNECTION"]}
 
 
@@ -131,7 +131,7 @@ def test_move_request_round_trip(robot, fleet_of):
     send(fleet, uid)
     fleet.wait(lambda m: "SUCCEEDED" in fleet.statuses(), "SUCCEEDED")
     assert fleet.statuses() == ["RECEIVED", "ACCEPTED", "EXECUTING", "SUCCEEDED"]
-    fleet.wait(lambda m: fleet.on("/activeRequestsStatus")[-1] == [], "activeRequestsStatus []")
+    fleet.wait(lambda m: fleet.on("/activeRequestsStatus")[-1:] == [[]], "activeRequestsStatus []")
 
 
 def test_terminal_request_retained_topic_cleared(broker_url, robot, fleet_of):
