@@ -104,3 +104,32 @@ def test_validation_warning_event(ts):
 def test_topic_filter_matches():
     assert topic_filter_matches("a/+/c", "a/b/c") and topic_filter_matches("a/#", "a/b/c")
     assert not topic_filter_matches("a/+", "a/b/c") and not topic_filter_matches("a/b/c/d", "a/b/c")
+
+
+def test_concurrent_retained_publishes_keep_broker_and_cache_consistent():
+    import threading
+
+    class Slow(FakeTransport):
+        slow = False
+
+        def publish(self, *a):
+            if self.slow and '"batterySoc":0.1' in a[1]:
+                self.slow = False
+                time.sleep(0.1)  # first publisher stalls after setting the cache
+            super().publish(*a)
+    t = Slow(); s = Session.connect(t, "IMR", U)
+    t.slow = True
+    topic = f"/ISO_21423/v1/IMR/{U}/batteryStatus"
+    a = threading.Thread(target=s.publish_resource, args=("batteryStatus", "batteryStatus", {**B, "batterySoc": 0.1}))
+    a.start(); time.sleep(0.03)
+    s.publish_resource("batteryStatus", "batteryStatus", {**B, "batterySoc": 0.2})
+    a.join()
+    assert t.retained[topic] == s._retained[topic][0]
+
+
+def test_close_closes_transport_even_if_final_publish_fails(ts):
+    t, s = ts
+    t.publish = lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        s.close(["OFFLINE"])
+    assert t.closed

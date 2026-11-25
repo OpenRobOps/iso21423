@@ -114,11 +114,17 @@ class PahoTransport:
 
     def publish(self, topic, payload, qos, retain):
         info = self._live().publish(topic, payload, qos, retain)
+        if info.rc == mqtt.MQTT_ERR_NO_CONN:
+            # Disconnected: paho queues QoS>=1 (delivered on reconnect, so success); QoS0 is dropped.
+            return
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
             raise Iso21423Error(f"mqtt publish failed (rc={info.rc}): {topic}")
 
     def subscribe(self, filter, qos):
-        rc, mid = self._live().subscribe(filter, qos)
+        c = self._live()
+        if threading.current_thread() is getattr(c, "_thread", None):
+            raise Iso21423Error("subscribe from a callback is not supported")
+        rc, mid = c.subscribe(filter, qos)
         if rc != mqtt.MQTT_ERR_SUCCESS:
             raise Iso21423Error(f"mqtt subscribe failed (rc={rc}): {filter}")
         with self._cond:

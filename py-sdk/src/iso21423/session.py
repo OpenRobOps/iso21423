@@ -28,7 +28,8 @@ class Session:
         self._t = transport
         self.entity_type, self.entity_uuid = entity_type, entity_uuid
         self._validate = validate_outbound
-        self._lock = threading.Lock()
+        # RLock held across publish so cache order == broker order (publish only queues)
+        self._lock = threading.RLock()
         self._retained: dict[str, tuple[str, int]] = {}
         self._gates: dict[str, RateGate] = {}
         self._subs: list[tuple[str, Callable[[str, ParsedTopic], None]]] = []
@@ -79,12 +80,11 @@ class Session:
                 if self._retained.get(topic, (None,))[0] == body:  # on-change rule
                     return
                 self._retained[topic] = (body, cfg.qos)
-            try:
-                self._t.publish(topic, body, cfg.qos, True)
-            except Exception:
-                with self._lock:
+                try:
+                    self._t.publish(topic, body, cfg.qos, True)
+                except Exception:
                     self._retained.pop(topic, None)
-                raise
+                    raise
         elif cfg.max_hz is not None:
             with self._lock:
                 gate = self._gates.get(topic)
@@ -108,7 +108,7 @@ class Session:
     def clear_retained(self, topic: str) -> None:
         with self._lock:
             self._retained.pop(topic, None)
-        self._t.publish(topic, "", 1, True)
+            self._t.publish(topic, "", 1, True)
 
     def subscribe(self, filter: str, handler: Callable[[str, ParsedTopic], None], qos: int) -> None:
         if not self._t.subscribe(filter, qos):
@@ -120,14 +120,16 @@ class Session:
         self._emit("validation_warning", topic, payload, errors)
 
     def close(self, final_states: list[str] | None = None) -> None:
-        if final_states is not None:
-            self.publish_resource("status", "entityStatus", {
-                "entityId": self.entity_uuid, "timestamp": now_timestamp(), "states": final_states})
-        with self._lock:
-            gates = list(self._gates.values())
-        for g in gates:
-            g.dispose()
-        self._t.close()
+        try:
+            if final_states is not None:
+                self.publish_resource("status", "entityStatus", {
+                    "entityId": self.entity_uuid, "timestamp": now_timestamp(), "states": final_states})
+        finally:
+            with self._lock:
+                gates = list(self._gates.values())
+            for g in gates:
+                g.dispose()
+            self._t.close()
 
     def _dispatch(self, topic: str, payload: bytes) -> None:
         parsed = parse_topic(topic)
@@ -151,11 +153,10 @@ class Session:
         reconnect, self._was_connected = self._was_connected, True
         if not reconnect:
             return
-        with self._lock:
-            owned = list(self._retained.items())
         try:
-            for topic, (body, qos) in owned:
-                self._t.publish(topic, body, qos, True)
-            self.clear_retained(disconnection_topic(self.entity_type, self.entity_uuid))  # our LWT fired
+            with self._lock:
+                for topic, (body, qos) in list(self._retained.items()):
+                    self._t.publish(topic, body, qos, True)
+                self.clear_retained(disconnection_topic(self.entity_type, self.entity_uuid))  # our LWT fired
         except Exception as e:
             self._emit_error(e)
