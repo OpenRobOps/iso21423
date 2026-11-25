@@ -106,7 +106,7 @@ Port of the TS SDK's IMR-side surface, same semantics, Pythonic names:
   normalisation of FDIS inconsistencies.
 - **Entity handle** — `register_self_entity(...)` → `publish_identity/status/battery_status/odometry/
   local_trajectory/global_plan/extension`, `unregister()` (clears retained, leaves `OFFLINE` tombstone).
-- **Request serving** — `on_request(type, handler)`; executor with the C.3/C.4 state machines,
+- **Request serving** — `on_request(type, handler)` to register handlers, then `start_serving()` so retained requests replay only after every handler exists; executor with the C.3/C.4 state machines,
   duplicate suppression, `blocking`/`atomic`, `activeRequestsStatus`, retained-request cleanup,
   `cancelRequest`, the five C.2.2 execution policies, `sequenceId` persistence (file store).
 - **Geometry** — `fit_transform` (rigid 2D least squares from ≥ 3 point pairs), apply/invert, yaw.
