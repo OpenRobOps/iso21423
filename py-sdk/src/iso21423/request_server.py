@@ -9,6 +9,7 @@ holding the server lock: decisions are taken under the lock and applied after re
 import json
 import logging
 import math
+import re
 import threading
 from dataclasses import dataclass
 from functools import partial
@@ -24,6 +25,8 @@ from .timestamps import now_timestamp
 from .topics import RESOURCE_CONFIG, request_status_topic, request_topic, topic_for
 
 _log = logging.getLogger(__name__)
+# the schema's $defs/uuid: a source that fails it cannot be echoed in an outbound status
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 
 
 @dataclass
@@ -132,23 +135,27 @@ class RequestServer:
             with self._lock:
                 policy = self._get_policy()
                 ops = self._decide_locked(inc, policy.admit(request, self._view()), policy)
-            for op in ops:
-                op()
+            self._apply(ops)
 
     def _reject_or_warn(self, topic, raw, parsed, errors, uuid) -> None:
-        """MALFORMED_REQUEST when (source, sequenceId) can still be read; else a validation warning."""
+        """MALFORMED_REQUEST when a valid (source, sequenceId) can still be read; else a validation
+        warning, and the retained request is cleared (an unroutable one never terminates)."""
         obj = parsed if isinstance(parsed, dict) else {}
         source, seq = obj.get("source"), obj.get("sequenceId")
-        if not isinstance(source, str) or not isinstance(seq, int) or isinstance(seq, bool):
-            self._session.report_validation_warning(topic, raw, errors)
-            self._session.clear_retained(topic)  # an unroutable retained request never terminates
-            return
-        details = obj.get("details")
-        first = details[0] if isinstance(details, list) and details else None
-        dtype = first["type"] if isinstance(first, dict) and isinstance(first.get("type"), str) else "unknown"
-        minimal = {"destination": self.owner_uuid, "source": source, "sequenceId": seq,
-                   "timestamp": now_timestamp(), "details": [{"type": dtype, "version": "1.0"}]}
-        IncomingRequest(minimal, uuid, self).reject("MALFORMED_REQUEST")
+        if isinstance(source, str) and _UUID.match(source) and isinstance(seq, int) \
+                and not isinstance(seq, bool) and seq >= 0:
+            details = obj.get("details")
+            first = details[0] if isinstance(details, list) and details else None
+            dtype = first["type"] if isinstance(first, dict) and isinstance(first.get("type"), str) else "unknown"
+            minimal = {"destination": self.owner_uuid, "source": source, "sequenceId": seq,
+                       "timestamp": now_timestamp(), "details": [{"type": dtype, "version": "1.0"}]}
+            try:
+                IncomingRequest(minimal, uuid, self).reject("MALFORMED_REQUEST")
+                return
+            except Exception as e:
+                _log.debug("MALFORMED_REQUEST reject failed for %s: %r", topic, e)
+        self._session.report_validation_warning(topic, raw, errors)
+        self._session.clear_retained(topic)
 
     # --- admission (bookkeeping under the lock, mutators after) ---
 
@@ -202,8 +209,15 @@ class RequestServer:
                     return
                 del self._pending[i]
                 ops = self._decide_locked(inc, decision, policy)
-            for op in ops:
+            self._apply(ops)
+
+    def _apply(self, ops) -> None:
+        """Runs every op even if one fails (a skipped _spawn would wedge an admitted request)."""
+        for op in ops:
+            try:
                 op()
+            except Exception as e:
+                self._session._emit_error(e)
 
     def _end_preempted(self, inc, key) -> None:
         # admitted but not registered with the executor at decision time: end it here. A run

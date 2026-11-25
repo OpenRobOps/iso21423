@@ -47,8 +47,7 @@ def invert_transform(t: RigidTransform2D) -> RigidTransform2D:
 def transform_yaw(t: RigidTransform2D, yaw: float) -> float:
     """Rotate a yaw by the transform, wrapped to (-pi, pi]."""
     r = yaw + t.rotation
-    while r > math.pi:
-        r -= 2 * math.pi
-    while r <= -math.pi:
-        r += 2 * math.pi
-    return r
+    if not math.isfinite(r):
+        raise ValueError(f"transform_yaw: non-finite yaw {r}")
+    r = math.remainder(r, 2 * math.pi)
+    return math.pi if r == -math.pi else r

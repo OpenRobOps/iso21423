@@ -468,3 +468,88 @@ def test_stop_ignores_further_requests():
     r.server.stop()
     r.send([MOVE()], 1)
     assert r.statuses(1) == []
+
+
+def test_unroutable_source_or_sequence_warned_and_cleared():
+    r = Robot()
+    errs = []
+    r.session.on("error", errs.append)
+    for seq, payload in ((1, {"source": "fleet-1", "sequenceId": 1, "details": []}),
+                         (2, {"source": SA, "sequenceId": -1, "details": []})):
+        topic = request_topic("IMR", ROBOT, ruuid(seq))
+        r.t.retained[topic] = "x"
+        r.inject(payload, ruuid(seq))
+        assert topic not in r.t.retained and r.statuses(seq) == []
+    assert len(r.warnings) == 2 and errs == []
+
+
+def test_failed_malformed_reject_falls_back_to_warn_and_clear(monkeypatch):
+    r = Robot()
+
+    def boom(*a, **k):
+        raise RuntimeError("publish failed")
+    monkeypatch.setattr(r.session, "publish_topic", boom)
+    topic = request_topic("IMR", ROBOT, ruuid(3))
+    r.t.retained[topic] = "x"
+    r.inject({"source": SA, "sequenceId": 3, "details": "x"}, ruuid(3))
+    assert topic not in r.t.retained and len(r.warnings) == 1
+
+
+# --- a failure after accept() must still end the request (final review #2) ---
+
+def test_bad_progress_properties_abort_and_free_admission():
+    r = Robot(policies.preempt())
+
+    def h(action, ctx):
+        ctx.progress({"t": object()})
+        return ctx.succeeded()
+    r.ex.register("move", h)
+    r.send([MOVE()], 1)
+    r.wait_status(1, "ABORTED")
+    assert r.reason_of(1) == "GENERAL_FAILURE"
+    wait_for(lambda: r.last_active() == [] and r.server.serving_count == 0)
+    r.ex.register("move", lambda a, c: c.succeeded(), override=True)
+    r.send([MOVE()], 2)
+    r.wait_status(2, "SUCCEEDED")
+
+
+def test_non_string_reason_aborts_and_next_request_admitted():
+    r = Robot(policies.abort_new())
+    r.ex.register("move", lambda a, c: c.aborted(123))
+    r.send([MOVE()], 1)
+    r.wait_status(1, "ABORTED")
+    assert r.reason_of(1) == "GENERAL_FAILURE"
+    r.ex.register("move", lambda a, c: c.succeeded(), override=True)
+    r.send([MOVE()], 2)
+    r.wait_status(2, "SUCCEEDED")
+
+
+def test_handler_returning_none_is_general_failure():
+    r = Robot(policies.abort_new())
+    r.ex.register("move", lambda a, c: None)
+    r.send([MOVE()], 1)
+    r.wait_status(1, "ABORTED")
+    assert r.reason_of(1) == "GENERAL_FAILURE"
+    r.send([MOVE()], 2)
+    r.wait_status(2, "ABORTED")
+    assert r.reason_of(2) == "GENERAL_FAILURE"  # admitted and run, not REJECTED
+
+
+def test_failing_admission_op_does_not_skip_spawn(monkeypatch):
+    r = Robot(policies.preempt())
+    errs = []
+    r.session.on("error", errs.append)
+    order, gates = r.gated()
+    r.send([MOVE()], 1, SA)
+    wait_for(lambda: len(gates) == 1)
+    monkeypatch.setattr(r.ex, "cancel", lambda key: False)  # forces an _end_preempted op
+
+    def boom(*a):
+        raise RuntimeError("end failed")
+    monkeypatch.setattr(r.server, "_end_preempted", boom)
+    r.send([MOVE()], 2, SB)
+    wait_for(lambda: len(gates) == 2)
+    for g in gates:
+        g.set()
+    r.wait_status(2, "SUCCEEDED")
+    assert [str(e) for e in errs] == ["end failed"]

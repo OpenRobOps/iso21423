@@ -47,6 +47,9 @@ def on_move(action: dict, ctx):
     return ctx.succeeded()
 
 robot.on_request("move", on_move)
+# Register every handler first: start_serving() subscribes to requests, and the broker replays
+# retained (still pending) requests right away. on_request() after this still works.
+robot.start_serving()
 ```
 
 ## Behaviour notes

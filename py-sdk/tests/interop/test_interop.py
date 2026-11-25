@@ -38,6 +38,7 @@ def imr(broker_url):
 def test_move_succeeds(broker_url, imr):
     h, uid = imr
     h.on_request("move", lambda a, ctx: ctx.succeeded())
+    h.start_serving()
     statuses = [m["status"] for m in run_ts(broker_url, uid, "move_succeeds") if "status" in m]
     assert statuses[-1] == "SUCCEEDED"
 
@@ -49,6 +50,7 @@ def test_cancel(broker_url, imr):
         ctx.cancelled.wait(15)
         return ctx.aborted("REJECTED", "cancelled")
     h.on_request("move", handler)
+    h.start_serving()
     statuses = [m["status"] for m in run_ts(broker_url, uid, "cancel") if "status" in m]
     assert statuses[-1] == "CANCELED"
 
@@ -56,6 +58,7 @@ def test_cancel(broker_url, imr):
 def test_abort_reason(broker_url, imr):
     h, uid = imr
     h.on_request("move", lambda a, ctx: ctx.aborted("GENERAL_FAILURE", "boom"))
+    h.start_serving()
     out = run_ts(broker_url, uid, "abort_reason")
     assert [m for m in out if m.get("status") == "ABORTED"][-1]["reason"] == "GENERAL_FAILURE"
 

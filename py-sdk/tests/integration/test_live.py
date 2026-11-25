@@ -127,6 +127,7 @@ def test_will_published_on_ungraceful_disconnect(broker_url, robot, fleet_of):
 def test_move_request_round_trip(robot, fleet_of):
     c, h, uid = robot
     h.on_request("move", lambda a, ctx: ctx.succeeded())
+    h.start_serving()
     fleet = fleet_of(f"{ROOT}/{uid}/request/+/status", f"{ROOT}/{uid}/activeRequestsStatus")
     send(fleet, uid)
     fleet.wait(lambda m: "SUCCEEDED" in fleet.statuses(), "SUCCEEDED")
@@ -137,6 +138,7 @@ def test_move_request_round_trip(robot, fleet_of):
 def test_terminal_request_retained_topic_cleared(broker_url, robot, fleet_of):
     c, h, uid = robot
     h.on_request("move", lambda a, ctx: ctx.succeeded())
+    h.start_serving()
     fleet = fleet_of(f"{ROOT}/{uid}/request/+")
     ruuid = send(fleet, uid)
     # the fleet sees the SDK's clearing (empty retained) after its own request
@@ -155,6 +157,7 @@ def test_reconnect_republishes_and_finishes_request(broker, broker_url, robot, f
         time.sleep(2)
         return ctx.succeeded()
     h.on_request("move", handler)
+    h.start_serving()
     fleet = fleet_of(f"{ROOT}/{uid}/request/+/status")
     send(fleet, uid)
     assert running.wait(WAIT)
@@ -181,3 +184,32 @@ def test_odometry_rate_capped_at_30hz(robot, fleet_of):
     time.sleep(0.5)  # trailing sample, then silence
     n = len(fleet.on("/odometry"))
     assert 20 <= n <= 31, n
+
+
+def test_new_request_after_broker_restart_without_session(broker, robot, fleet_of):
+    if not broker.container:
+        pytest.skip("cannot restart an external broker")
+    c, h, uid = robot
+    h.on_request("move", lambda a, ctx: ctx.succeeded())
+    h.start_serving()
+    broker.restart()  # no persistence: the broker forgets the robot's request/+ subscription
+    fleet = fleet_of(f"{ROOT}/{uid}/request/+/status")
+    send(fleet, uid, request(uid, seq=7))
+    fleet.wait(lambda m: "SUCCEEDED" in fleet.statuses(), "SUCCEEDED for a request sent after the restart")
+
+
+def test_retained_request_replayed_on_start_serving(broker_url, fleet_of):
+    uid = str(uuid.uuid4())
+    fleet = fleet_of(f"{ROOT}/{uid}/request/+/status")
+    send(fleet, uid, {**request(uid), "details": [{"type": "dock", "version": "1.0"}]})
+    c = Client.connect(broker_url, sequence_store=None)
+    try:
+        h = c.register_self_entity(uid, "IMR", "Acme", accepts=["move", "dock"])
+        h.on_request("move", lambda a, ctx: ctx.succeeded())
+        time.sleep(0.05)
+        h.on_request("dock", lambda a, ctx: ctx.succeeded())
+        h.start_serving()
+        fleet.wait(lambda m: "SUCCEEDED" in fleet.statuses() or "ABORTED" in fleet.statuses(), "terminal")
+        assert fleet.statuses()[-1] == "SUCCEEDED"
+    finally:
+        c.close()

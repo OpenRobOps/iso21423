@@ -190,3 +190,45 @@ def test_concurrent_progress_vs_complete_in_order():
     ids = [s["sequenceId"] for s in sink.statuses]
     assert ids == sorted(ids) and len(set(ids)) == len(ids)
     assert r.is_terminal and r.state == "SUCCEEDED"
+
+
+def test_bad_properties_raise_without_changing_state(sink):
+    r = make(sink)
+    r.accept()
+    r.update_detail_status(0, "EXECUTING")
+    n = len(sink.statuses)
+    for bad in ({"t": object()}, ["not", "a", "dict"]):
+        with pytest.raises((TypeError, ValueError)):
+            r.update_detail_status(0, "SUCCEEDED", properties=bad)
+    assert len(sink.statuses) == n
+    r.update_detail_status(0, "SUCCEEDED", properties={"ok": 1})
+    assert codes(sink.statuses[-1])[0] == "SUCCEEDED" and sink.statuses[-1]["detailStatuses"][0]["properties"] == {"ok": 1}
+
+
+def test_properties_are_copied(sink):
+    r = make(sink)
+    r.accept()
+    props = {"nested": {"v": 1}}
+    r.update_detail_status(0, "EXECUTING", properties=props)
+    props["nested"]["v"] = 2
+    r.complete("ABORTED")
+    assert sink.statuses[-1]["detailStatuses"][0]["properties"] == {"nested": {"v": 1}}
+
+
+def test_failed_emit_rolls_back_state(sink):
+    r = make(sink)
+    r.accept()
+    publish = sink.publish_status
+
+    def failing(req, status):
+        raise RuntimeError("wire down")
+    sink.publish_status = failing
+    with pytest.raises(RuntimeError):
+        r.update_detail_status(0, "ABORTED", reason=123)
+    with pytest.raises(RuntimeError):
+        r.complete("ABORTED")
+    assert r.state == "ACCEPTED"
+    sink.publish_status = publish
+    r.complete("ABORTED", "GENERAL_FAILURE")
+    assert sink.statuses[-1]["status"] == "ABORTED"
+    assert sink.statuses[-1]["detailStatuses"][0]["status"] == {"code": "ABORTED", "reason": "GENERAL_FAILURE"}

@@ -53,6 +53,7 @@ class PahoTransport:
         self._closing = False
         self._cond = threading.Condition()
         self._acks: dict[int, list[int]] = {}
+        self._subs: dict[str, int] = {}  # granted filters, replayed when the broker lost our session
 
     def _new_client(self, client_id: str, clean_session: bool) -> mqtt.Client:
         kwargs = dict(client_id=client_id, clean_session=clean_session, protocol=mqtt.MQTTv311)
@@ -91,6 +92,13 @@ class PahoTransport:
             self._refused = rc
             self._connected.set()
             return
+        if not flags.get("session present"):
+            # paho never resubscribes; mqtt.js does (resubscribe: true). Fire and forget: the loop
+            # thread cannot wait for its own SUBACK.
+            with self._cond:
+                subs = list(self._subs.items())
+            for f, qos in subs:
+                client.subscribe(f, qos)
         self._connected.set()
         self._emit("connected")
 
@@ -131,9 +139,14 @@ class PahoTransport:
             if not self._cond.wait_for(lambda: mid in self._acks, self._timeout):
                 raise Iso21423Error(f"mqtt subscribe timed out: {filter}")
             granted = self._acks.pop(mid)
-        return bool(granted) and all(g < 128 for g in granted)
+            ok = bool(granted) and all(g < 128 for g in granted)
+            if ok:
+                self._subs[filter] = qos
+        return ok
 
     def unsubscribe(self, filter):
+        with self._cond:
+            self._subs.pop(filter, None)
         self._live().unsubscribe(filter)
 
     def on_message(self, cb):

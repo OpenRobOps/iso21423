@@ -33,8 +33,8 @@ class EntityHandle:
         self._states: list[str] = []
         self._policy = None
         self._registration_policy = execution_policy
-        self._executor: ActionExecutor | None = None
-        self._server: RequestServer | None = None
+        self._executor = ActionExecutor()
+        self._server = RequestServer(session, self, self._executor, sequence, self._get_policy)
         self._lock = threading.Lock()
 
     def identity(self) -> dict:
@@ -81,18 +81,18 @@ class EntityHandle:
         return self._policy or self._registration_policy or DEFAULT_EXECUTION_POLICY
 
     def on_request(self, type: str, handler, override: bool = False) -> None:
-        """Registers a per-action handler; the request server starts on first use."""
+        """Registers a per-action handler. Requests are received only after start_serving();
+        registering later still works (live registration)."""
+        self._executor.register(type, handler, override)
+
+    def start_serving(self) -> None:
+        """Subscribes to request/+ (idempotent). Register handlers first: retained requests are
+        replayed right after the subscription and run against the handlers registered by then."""
         with self._lock:
-            if self._executor is None:
-                self._executor = ActionExecutor()
-                self._server = RequestServer(self._session, self, self._executor, self._seq, self._get_policy)
-                self._server.start()
-            executor = self._executor
-        executor.register(type, handler, override)
+            self._server.start()
 
     def stop_serving(self) -> None:
-        if self._server:
-            self._server.stop()
+        self._server.stop()
 
     def unregister(self) -> None:
         """Final OFFLINE status stays as the tombstone; every other retained topic is cleared."""

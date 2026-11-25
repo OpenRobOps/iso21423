@@ -111,10 +111,19 @@ class Session:
             self._t.publish(topic, "", 1, True)
 
     def subscribe(self, filter: str, handler: Callable[[str, ParsedTopic], None], qos: int) -> None:
-        if not self._t.subscribe(filter, qos):
-            raise AuthorizationDenied(f"subscription denied by broker: {filter}")
+        # registered first: retained messages can arrive before the SUBACK reaches this thread
+        sub = (filter, handler)
         with self._lock:
-            self._subs.append((filter, handler))
+            self._subs.append(sub)
+        granted = False
+        try:
+            granted = self._t.subscribe(filter, qos)
+        finally:
+            if not granted:
+                with self._lock:
+                    self._subs.remove(sub)
+        if not granted:
+            raise AuthorizationDenied(f"subscription denied by broker: {filter}")
 
     def report_validation_warning(self, topic: str, payload: str, errors: list) -> None:
         self._emit("validation_warning", topic, payload, errors)

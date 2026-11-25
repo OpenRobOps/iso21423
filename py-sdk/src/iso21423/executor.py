@@ -92,6 +92,18 @@ class ActionExecutor:
         return True
 
     def run(self, incoming: IncomingRequest, entity) -> None:
+        try:
+            self._run(incoming, entity)
+        except BaseException:
+            # whatever failed, the request must not stay non-terminal: it would wedge admission
+            if not incoming.is_terminal:
+                try:
+                    incoming.complete("ABORTED", "GENERAL_FAILURE")
+                except Exception:
+                    pass  # best effort; the original error is what the caller reports
+            raise
+
+    def _run(self, incoming: IncomingRequest, entity) -> None:
         request = incoming.request
         reason = self._preflight(request, entity)
         if reason:
@@ -185,7 +197,11 @@ class ActionExecutor:
         try:
             if handler is None:
                 return ActionResult("aborted", reason="ACTION_NOT_IMPLEMENTED")
-            return handler(action, ctx)
+            result = handler(action, ctx)
+            if not isinstance(result, ActionResult):
+                return ActionResult("aborted", reason="GENERAL_FAILURE",
+                                    message=f"handler returned {type(result).__name__}, not ActionResult")
+            return result
         except Exception as e:  # handler errors map to GENERAL_FAILURE
             return ActionResult("aborted", reason="GENERAL_FAILURE", message=str(e))
 

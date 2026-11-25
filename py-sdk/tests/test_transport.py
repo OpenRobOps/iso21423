@@ -39,3 +39,20 @@ def test_subscribe_from_loop_thread_raises_clearly():
     th = threading.Thread(target=run); th.start(); th.join(2)
     assert errs and "callback" in errs[0]
     t._client.subscribe.assert_not_called()
+
+
+def subscribed(t, filter, qos, granted):
+    t._client.subscribe.return_value = (mqtt.MQTT_ERR_SUCCESS, 7)
+    t._acks[7] = [granted]
+    return t.subscribe(filter, qos)
+
+
+def test_reconnect_without_session_resubscribes():
+    t = make()
+    assert subscribed(t, "a/+", 2, 2)
+    assert not subscribed(t, "denied/#", 1, 0x80)
+    t._client.subscribe.reset_mock()
+    t._on_connect(t._client, None, {"session present": 1}, 0)
+    t._client.subscribe.assert_not_called()
+    t._on_connect(t._client, None, {"session present": 0}, 0)
+    t._client.subscribe.assert_called_once_with("a/+", 2)

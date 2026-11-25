@@ -33,3 +33,16 @@ def test_transform_yaw_wraps_to_half_open_interval():
     assert transform_yaw(RigidTransform2D(math.pi, 0, 0), 0.5) == pytest.approx(0.5 - math.pi)
     assert transform_yaw(RigidTransform2D(math.pi, 0, 0), 0.0) == pytest.approx(math.pi)
     assert transform_yaw(RigidTransform2D(0.2, 0, 0), -math.pi) == pytest.approx(-math.pi + 0.2)
+
+
+def test_transform_yaw_large_input_wraps_without_looping():
+    r = transform_yaw(RigidTransform2D(0.3, 0, 0), 1e300)
+    assert -math.pi < r <= math.pi
+    assert transform_yaw(RigidTransform2D(0, 0, 0), -math.pi) == math.pi
+    assert transform_yaw(RigidTransform2D(0, 0, 0), 7 * math.pi) == pytest.approx(math.pi)
+
+
+@pytest.mark.parametrize("yaw", [math.inf, -math.inf, math.nan])
+def test_transform_yaw_non_finite_raises(yaw):
+    with pytest.raises(ValueError):
+        transform_yaw(RigidTransform2D(0.3, 0, 0), yaw)

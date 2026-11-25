@@ -133,3 +133,33 @@ def test_close_closes_transport_even_if_final_publish_fails(ts):
     with pytest.raises(RuntimeError):
         s.close(["OFFLINE"])
     assert t.closed
+
+
+class EagerTransport(FakeTransport):
+    """Delivers a retained message during subscribe(), i.e. before the SUBACK reaches the caller."""
+
+    def subscribe(self, filter, qos):
+        ok = super().subscribe(filter, qos)
+        if ok:
+            self.inject(f"/ISO_21423/v1/IMR/{U}/request/r1", "retained")
+        return ok
+
+
+def test_subscriber_registered_before_suback():
+    t = EagerTransport()
+    s = Session.connect(t, "IMR", U)
+    got = []
+    s.subscribe(f"/ISO_21423/v1/IMR/{U}/request/+", lambda text, p: got.append(text), 2)
+    assert got == ["retained"]
+
+
+def test_denied_subscriber_is_removed():
+    t = EagerTransport()
+    s = Session.connect(t, "IMR", U)
+    t.grant = False
+    got = []
+    with pytest.raises(AuthorizationDenied):
+        s.subscribe(f"/ISO_21423/v1/IMR/{U}/request/+", lambda text, p: got.append(text), 2)
+    got.clear()
+    t.inject(f"/ISO_21423/v1/IMR/{U}/request/r2", "later")
+    assert got == []

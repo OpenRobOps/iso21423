@@ -1,4 +1,7 @@
+import copy
+import json
 import threading
+from contextlib import contextmanager
 from typing import Protocol
 
 from iso21423.errors import IllegalTransition
@@ -12,6 +15,15 @@ class StatusSink(Protocol):
     def publish_status(self, req: "IncomingRequest", status: dict) -> None: ...
 
     def next_status_sequence_id(self) -> int: ...
+
+
+def _json_copy(properties):
+    """Deep, JSON-only copy of handler properties; raises (TypeError/ValueError) before any state changes."""
+    if properties is None:
+        return None
+    if not isinstance(properties, dict):
+        raise TypeError(f"properties must be a dict, got {type(properties).__name__}")
+    return json.loads(json.dumps(properties, allow_nan=False))
 
 
 def _seed(details: list) -> list:
@@ -32,7 +44,11 @@ class IncomingRequest:
 
     Lock order: request lock, then sink lock. The sink (server) must never call request
     mutators while holding its own lock. The request lock is reentrant, so publish_status
-    may call back into this request (e.g. read `state`)."""
+    may call back into this request (e.g. read `state`).
+
+    Every mutation is atomic with its emit: if the status cannot be built, validated or published,
+    the request rolls back to its last emitted state, so bad data never sticks and a later
+    transition (e.g. the executor's GENERAL_FAILURE abort) can still be published."""
 
     def __init__(self, request: dict, request_uuid: str, sink: StatusSink):
         self.request = request
@@ -53,6 +69,18 @@ class IncomingRequest:
     def is_terminal(self) -> bool:
         return self._lifecycle.is_terminal()
 
+    @contextmanager
+    def _atomic(self):
+        with self._lock:
+            saved = copy.deepcopy((self._lifecycle, self._details, self._detail_statuses,
+                                   self._recoveries, self._recovery_statuses))
+            try:
+                yield
+            except BaseException:
+                (self._lifecycle, self._details, self._detail_statuses,
+                 self._recoveries, self._recovery_statuses) = saved
+                raise
+
     def publish_received(self) -> None:
         with self._lock:
             self._emit()
@@ -70,7 +98,8 @@ class IncomingRequest:
         self._transition_to(status, reason, message)
 
     def update_detail_status(self, index, status, reason=None, message=None, properties=None) -> None:
-        with self._lock:
+        properties = _json_copy(properties)
+        with self._atomic():
             lc, entry = self._at(self._details, self._detail_statuses, index, "request")
             # a cascade may already have advanced this detail: agreeing call is a no-op
             if lc.state != status:
@@ -79,14 +108,15 @@ class IncomingRequest:
             self._emit()
 
     def enter_recovery(self, recoveries: list, reason=None) -> None:
-        with self._lock:
+        with self._atomic():
             self._lifecycle.transition("RECOVERY")  # validate before seeding recovery state
             self._recoveries = [DetailLifecycle() for _ in recoveries]
             self._recovery_statuses = _seed(recoveries)
             self._transition_locked("RECOVERY", reason, _checked=True)
 
     def update_recovery_status(self, index, status, reason=None, message=None, properties=None) -> None:
-        with self._lock:
+        properties = _json_copy(properties)
+        with self._atomic():
             lc, entry = self._at(self._recoveries, self._recovery_statuses, index, "recovery")
             # recovery lifecycles are never cascaded: first EXECUTING must step through ACCEPTED
             if status == "EXECUTING" and lc.state == "RECEIVED":
@@ -113,7 +143,7 @@ class IncomingRequest:
             entry["properties"] = {**entry.get("properties", {}), **properties}
 
     def _transition_to(self, to, reason=None, message=None) -> None:
-        with self._lock:
+        with self._atomic():
             self._transition_locked(to, reason, message)
 
     def _transition_locked(self, to, reason=None, message=None, _checked=False) -> None:
