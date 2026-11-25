@@ -85,3 +85,18 @@ def parse_topic(topic: str) -> ParsedTopic | None:
     if tail:
         return None
     return ParsedTopic(entity_type, entity_uuid, resource, None, False)
+
+
+def disconnection_topic(entity_type: str, entity_uuid: str) -> str:
+    return topic_for(entity_type, entity_uuid, "disconnection")
+
+
+def topic_filter_matches(filter: str, topic: str) -> bool:
+    """MQTT wildcard match (`+` one level, `#` the rest)."""
+    f, t = filter.split("/"), topic.split("/")
+    for i, seg in enumerate(f):
+        if seg == "#":
+            return True
+        if i >= len(t) or (seg != "+" and seg != t[i]):
+            return False
+    return len(f) == len(t)
