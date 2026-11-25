@@ -178,7 +178,7 @@ class RequestServer:
                 k = (e.status["destination"], e.status["requestSequenceId"])
                 # executor.cancel is a leaf lock; a run it owns ends itself CANCELED
                 if e.admitted and k in keys and not self._executor.cancel(k):
-                    ops.append(partial(self._end_preempted, e.req))
+                    ops.append(partial(self._end_preempted, e.req, k))
         entry = self._active.get(inc.request_uuid)
         if entry is not None:
             entry.admitted = True
@@ -205,14 +205,15 @@ class RequestServer:
             for op in ops:
                 op()
 
-    @staticmethod
-    def _end_preempted(inc) -> None:
-        # admitted but not (yet) registered with the executor: end it here; its run thread then
-        # fails its own first transition and stops
+    def _end_preempted(self, inc, key) -> None:
+        # admitted but not registered with the executor at decision time: end it here. A run
+        # that registered since is signalled by the second cancel; one that registers later
+        # fails its first detail transition (request already terminal) before its handler runs.
         try:
             inc.complete("CANCELED", "PREEMPTED")
         except IllegalTransition:
             pass  # already settled
+        self._executor.cancel(key)
 
     def _spawn(self, inc) -> None:
         threading.Thread(target=self._run, args=(inc,), daemon=True).start()

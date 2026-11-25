@@ -313,6 +313,39 @@ def test_preempt_of_run_not_yet_registered_ends_it_directly(caplog):
     assert not [rec for rec in caplog.records if rec.levelname == "ERROR"]
 
 
+def test_preempted_run_registering_after_admission_is_signalled():
+    gate, calls = threading.Event(), []
+
+    class SlowPreflight:
+        def last_states(self):  # first run stalls before registering, so the preempt cancel misses it
+            calls.append(1)
+            if len(calls) == 1:
+                gate.wait(5)
+            return []
+    r = Robot(policies.preempt(), entity=SlowPreflight())
+    started, saw_cancel = threading.Event(), []
+
+    def handler(action, ctx):
+        if ctx.request["sequenceId"] == 1:
+            started.set()
+            saw_cancel.append(ctx.cancelled.wait(5))
+        return ctx.succeeded()
+    r.ex.register("move", handler)
+    end_preempted = r.server._end_preempted
+
+    def late_end(inc, key):  # the run registers and enters its handler before the direct end
+        gate.set()
+        assert started.wait(5)
+        end_preempted(inc, key)
+    r.server._end_preempted = late_end
+    r.send([MOVE(1)], 1)
+    wait_for(lambda: len(calls) == 1)
+    r.send([MOVE(2)], 2)
+    wait_for(lambda: saw_cancel == [True])
+    r.wait_status(1, "CANCELED")
+    r.wait_status(2, "SUCCEEDED")
+
+
 def test_pause_bypasses_admission_under_abort_new():
     r = Robot(policies.abort_new())
     cooperative(r)
