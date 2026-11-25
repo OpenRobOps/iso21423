@@ -85,10 +85,10 @@ class ActionExecutor:
     def cancel(self, key: RequestKey) -> bool:
         with self._runs_lock:
             run = self._runs.get(tuple(key))
-        if run is None:
-            return False
-        run.cancel_requested = True
-        run.cancelled.set()
+            if run is None:
+                return False
+            run.cancel_requested = True
+            run.cancelled.set()
         return True
 
     def run(self, incoming: IncomingRequest, entity) -> None:
@@ -113,10 +113,15 @@ class ActionExecutor:
             trigger, reason, message = outcome
             recoveries = request.get("recoveries")
             if recoveries:
+                # recoveries are cleanup FOR the trigger: fresh cancel tracking, so only a new cancel stops them.
+                # A cancel that landed after the main sequence's check still reclassifies the outcome.
+                with self._runs_lock:
+                    late = run.cancel_requested
+                    run.cancelled = threading.Event()
+                    run.cancel_requested = False
+                if late:
+                    trigger = "cancel"
                 incoming.enter_recovery(recoveries, reason)
-                # recoveries are cleanup FOR the trigger: fresh cancel tracking, so only a new cancel stops them
-                run.cancelled = threading.Event()
-                run.cancel_requested = False
                 rec = self._sequence(recoveries, request, entity, run, False, True,
                                      incoming.update_recovery_status)
                 if rec[0] != "success":
@@ -133,9 +138,13 @@ class ActionExecutor:
         steps = _group_steps(items)
         for s, group in enumerate(steps):
             results = [None] * len(group)
+            errors = []
 
             def work(k, index):
-                results[k] = self._one(index, items[index], request, entity, run, update)
+                try:
+                    results[k] = self._one(index, items[index], request, entity, run, update)
+                except BaseException as e:  # re-raised on the run thread after join
+                    errors.append(e)
 
             if len(group) == 1:
                 work(0, group[0])
@@ -145,6 +154,8 @@ class ActionExecutor:
                     t.start()
                 for t in threads:
                     t.join()
+            if errors:
+                raise errors[0]
             batch_abort = any(r.outcome == "aborted" for r in results)
             cancelled_now = run.cancelled.is_set() or run.cancel_requested
             for index, r in zip(group, results):

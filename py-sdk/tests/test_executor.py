@@ -199,12 +199,11 @@ def test_runs_recoveries_after_abort_and_still_ends_aborted(sink, ex):
 
 
 def test_resolves_cancel_request_during_recovery_and_ends_original_canceled(sink, ex):
-    held = threading.Event()
+    held, entered = threading.Event(), threading.Event()
     ex.register("move", lambda a, c: c.aborted("GENERAL_FAILURE", "wheel slip"))
-    ex.register("pauseImr", lambda a, c: (held.wait(5), c.succeeded())[1])
+    ex.register("pauseImr", lambda a, c: (entered.set(), held.wait(5), c.succeeded())[2])
     i, th = start_run(ex, sink, req([move()], [pause()]))
-    wait_for(lambda: i.state == "RECOVERY" and sink.statuses[-1]["status"] == "RECOVERY"
-             or sink.statuses[-1].get("recoveryStatuses", [{}])[0].get("status", {}).get("code") == "EXECUTING")
+    assert entered.wait(2)
     csink = Sink()
     cancel = IncomingRequest(
         req([{"type": "cancelRequest", "version": "1.0",
@@ -253,3 +252,37 @@ def test_refuses_to_replace_handler_without_override(ex):
         ex.register("move", lambda a, c: c.succeeded())
     ex.register("move", lambda a, c: c.succeeded(), override=True)
     assert ex.has_handlers()
+
+
+def test_cancel_just_after_main_abort_before_recovery_ends_canceled(sink, ex):
+    ex.register("move", lambda a, c: c.aborted("GENERAL_FAILURE", "x"))
+    ex.register("pauseImr", lambda a, c: c.succeeded())
+    fired = []
+    orig = sink.publish_status
+
+    def hook(r, status):
+        orig(r, status)
+        if not fired and status["detailStatuses"][0]["status"]["code"] == "ABORTED":
+            fired.append(ex.cancel((SRC, 7)))  # inside the window: after the cancelled check, before recovery
+
+    sink.publish_status = hook
+    run(ex, sink, req([move()], [pause()]))
+    assert fired == [True]
+    last = sink.statuses[-1]
+    assert last["status"] == "CANCELED"
+    assert last["recoveryStatuses"][0]["status"]["code"] == "SUCCEEDED"
+
+
+def test_exception_in_concurrent_step_worker_propagates(sink, ex):
+    ex.register("move", lambda a, c: c.succeeded())
+    i = incoming(sink, req([move(blocking=False), move(blocking=False)]))
+    boom = RuntimeError("publish failed")
+
+    def bad(*a, **k):
+        raise boom
+
+    i.update_detail_status = bad
+    i.accept(); i.update_status("EXECUTING")
+    i.reject = i.accept = i.update_status = lambda *a, **k: None
+    with pytest.raises(RuntimeError, match="publish failed"):
+        ex.run(i, Entity())
