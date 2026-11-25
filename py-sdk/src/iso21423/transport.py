@@ -1,5 +1,6 @@
 import ssl
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Protocol
 from urllib.parse import urlparse
@@ -32,6 +33,8 @@ class Transport(Protocol):
 
 
 class PahoTransport:
+    _FLUSH_TIMEOUT = 5.0  # total bound for in-flight publishes + DISCONNECT in close()
+
     """Transport over paho-mqtt (1.6 or 2.x), MQTT 3.1.1, auto-reconnect via the network thread."""
 
     def __init__(self, url: str, *, username: str | None = None, password: str | None = None,
@@ -51,6 +54,8 @@ class PahoTransport:
         self._connected = threading.Event()
         self._refused: int | None = None
         self._closing = False
+        self._disconnected = threading.Event()
+        self._inflight: list = []  # QoS>=1 MQTTMessageInfo, awaited in close()
         self._cond = threading.Condition()
         self._acks: dict[int, list[int]] = {}
         self._subs: dict[str, int] = {}  # granted filters, replayed when the broker lost our session
@@ -103,6 +108,7 @@ class PahoTransport:
         self._emit("connected")
 
     def _on_disconnect(self, client, userdata, rc):
+        self._disconnected.set()
         if not self._closing:  # close() emits "closed" itself
             self._emit("reconnecting")
 
@@ -122,6 +128,8 @@ class PahoTransport:
 
     def publish(self, topic, payload, qos, retain):
         info = self._live().publish(topic, payload, qos, retain)
+        if qos >= 1:
+            self._inflight = [i for i in self._inflight if not i.is_published()] + [info]
         if info.rc == mqtt.MQTT_ERR_NO_CONN:
             # Disconnected: paho queues QoS>=1 (delivered on reconnect, so success); QoS0 is dropped.
             return
@@ -159,6 +167,21 @@ class PahoTransport:
         if self._closing or self._client is None:
             return
         self._closing = True
-        self._client.disconnect()
-        self._client.loop_stop()
+        c = self._client
+        # Flush before closing the socket, else the broker sees a lost connection and fires the Will.
+        # Bounded; skipped when not connected (nothing can flush) and on the paho thread (it would
+        # wait on itself).
+        flush = c.is_connected() and threading.current_thread() is not getattr(c, "_thread", None)
+        deadline = time.monotonic() + self._FLUSH_TIMEOUT
+        if flush:
+            for info in list(self._inflight):
+                try:
+                    info.wait_for_publish(max(0.0, deadline - time.monotonic()))
+                except (ValueError, RuntimeError):
+                    pass
+            self._disconnected.clear()
+        c.disconnect()
+        if flush:
+            self._disconnected.wait(max(0.0, deadline - time.monotonic()))
+        c.loop_stop()
         self._emit("closed")

@@ -213,3 +213,16 @@ def test_retained_request_replayed_on_start_serving(broker_url, fleet_of):
         assert fleet.statuses()[-1] == "SUCCEEDED"
     finally:
         c.close()
+
+
+def test_clean_shutdown_leaves_no_will(broker_url):
+    uids = [str(uuid.uuid4()) for _ in range(8)]  # the race is probabilistic: several shutdowns per run
+    for uid in uids:
+        c = Client.connect(broker_url, sequence_store=None)
+        h = c.register_self_entity(uid, "IMR", "Acme", provides=["odometry"], accepts=["move"])
+        for i in range(20):
+            h.publish_status(["IDLE"] if i % 2 else ["EXECUTING"])
+        h.unregister()
+        c.close()  # straight after unregister: DISCONNECT must reach the broker before the socket closes
+    left = [t for t, _ in retained(broker_url, f"{ROOT}/+/disconnection") if t.split("/")[-2] in uids]
+    assert left == []
