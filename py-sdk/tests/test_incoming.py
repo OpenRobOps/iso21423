@@ -126,3 +126,67 @@ def test_recovery_flow(sink):
 def test_no_recovery_index_raises(sink):
     with pytest.raises(IllegalTransition):
         make(sink).update_recovery_status(0, "EXECUTING")
+
+
+def test_enter_recovery_illegal_leaves_no_recovery_state(sink):
+    r = make(sink)  # RECEIVED -> RECOVERY is illegal
+    with pytest.raises(IllegalTransition):
+        r.enter_recovery([{"type": "undock", "version": "1.0"}])
+    assert r.state == "RECEIVED" and len(sink.statuses) == 1
+    assert all("recoveryStatuses" not in s for s in sink.statuses)
+    r.accept()
+    assert "recoveryStatuses" not in sink.statuses[-1]
+
+
+def test_publish_status_may_read_request_state():
+    seen = []
+
+    class ReadingSink(Sink):
+        def publish_status(self, req, status):
+            seen.append(req.state)  # reentrant access must not deadlock
+            super().publish_status(req, status)
+
+    r = IncomingRequest(REQ_2_DETAILS, "r1", ReadingSink())
+    r.publish_received(); r.accept()
+    assert seen == ["RECEIVED", "ACCEPTED"]
+
+
+def test_concurrent_progress_vs_complete_in_order():
+    import threading
+
+    class LockedSink(Sink):
+        def __init__(self):
+            super().__init__()
+            self.lock = threading.RLock()
+
+        def next_status_sequence_id(self):
+            with self.lock:
+                return super().next_status_sequence_id()
+
+        def publish_status(self, req, status):
+            with self.lock:
+                super().publish_status(req, status)
+
+    sink = LockedSink()
+    r = make(sink)
+    r.accept(); r.update_status("EXECUTING")
+
+    def progress():
+        for i in range(50):
+            try:
+                r.update_detail_status(0, "EXECUTING", properties={"i": i})
+            except IllegalTransition:
+                return  # complete() won the race; detail already terminal
+
+    def finish():
+        r.complete("SUCCEEDED")
+
+    ts = [threading.Thread(target=progress), threading.Thread(target=finish)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(timeout=5)
+    assert not any(t.is_alive() for t in ts)  # no deadlock
+    ids = [s["sequenceId"] for s in sink.statuses]
+    assert ids == sorted(ids) and len(set(ids)) == len(ids)
+    assert r.is_terminal and r.state == "SUCCEEDED"

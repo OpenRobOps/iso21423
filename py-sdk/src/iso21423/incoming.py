@@ -28,13 +28,17 @@ def _seed(details: list) -> list:
 class IncomingRequest:
     """Server-side lifecycle for one received request; publishes a requestStatus on every change.
 
-    A request-level transition cascades onto in-flight details that legally admit it."""
+    A request-level transition cascades onto in-flight details that legally admit it.
+
+    Lock order: request lock, then sink lock. The sink (server) must never call request
+    mutators while holding its own lock. The request lock is reentrant, so publish_status
+    may call back into this request (e.g. read `state`)."""
 
     def __init__(self, request: dict, request_uuid: str, sink: StatusSink):
         self.request = request
         self.request_uuid = request_uuid
         self._sink = sink
-        self._lock = threading.Lock()  # serializes transition + emit
+        self._lock = threading.RLock()  # serializes transition + emit
         self._lifecycle = RequestLifecycle()
         self._details = [DetailLifecycle() for _ in request["details"]]
         self._detail_statuses = _seed(request["details"])
@@ -76,9 +80,10 @@ class IncomingRequest:
 
     def enter_recovery(self, recoveries: list, reason=None) -> None:
         with self._lock:
+            self._lifecycle.transition("RECOVERY")  # validate before seeding recovery state
             self._recoveries = [DetailLifecycle() for _ in recoveries]
             self._recovery_statuses = _seed(recoveries)
-            self._transition_locked("RECOVERY", reason)
+            self._transition_locked("RECOVERY", reason, _checked=True)
 
     def update_recovery_status(self, index, status, reason=None, message=None, properties=None) -> None:
         with self._lock:
@@ -111,8 +116,9 @@ class IncomingRequest:
         with self._lock:
             self._transition_locked(to, reason, message)
 
-    def _transition_locked(self, to, reason=None, message=None) -> None:
-        self._lifecycle.transition(to)  # raises IllegalTransition
+    def _transition_locked(self, to, reason=None, message=None, _checked=False) -> None:
+        if not _checked:
+            self._lifecycle.transition(to)  # raises IllegalTransition
         for lc, entry in zip(self._details, self._detail_statuses):
             if lc.is_terminal() or lc.state == to or not lc.can_transition(to):
                 continue
