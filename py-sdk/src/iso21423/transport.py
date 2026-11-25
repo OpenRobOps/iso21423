@@ -69,7 +69,7 @@ class PahoTransport:
             c.username_pw_set(user, pw)
         if will:
             c.will_set(will.topic, will.payload, will.qos, will.retain)
-        if self._secure or self._tls:
+        if self._secure or self._tls is not None:
             c.tls_set(**(self._tls or {}))
         c.reconnect_delay_set(1, 30)
         c.on_connect, c.on_disconnect = self._on_connect, self._on_disconnect

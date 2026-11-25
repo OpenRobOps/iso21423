@@ -56,3 +56,20 @@ def test_reconnect_without_session_resubscribes():
     t._client.subscribe.assert_not_called()
     t._on_connect(t._client, None, {"session present": 0}, 0)
     t._client.subscribe.assert_called_once_with("a/+", 2)
+
+
+def connect_with(tls, url="mqtt://h:1883"):
+    t = PahoTransport(url, tls=tls)
+    c = MagicMock()
+    t._new_client = lambda *a: c
+    c.connect_async.side_effect = lambda *a: t._on_connect(c, None, {"session present": 1}, 0)
+    t.connect("cid", True, 30, None, None, None)
+    return c
+
+
+def test_tls_empty_dict_enables_tls_on_mqtt_scheme():
+    connect_with(tls={}).tls_set.assert_called_once_with()
+
+
+def test_tls_none_leaves_tls_off_on_mqtt_scheme():
+    connect_with(tls=None).tls_set.assert_not_called()
