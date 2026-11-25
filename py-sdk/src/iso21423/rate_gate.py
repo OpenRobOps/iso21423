@@ -24,6 +24,7 @@ class RateGate:
             now = time.monotonic()
             if now - self._last >= self._interval:
                 self._last = now
+                self._pending = None  # superseded; a still-armed timer must not emit it right behind this value
             else:
                 self._pending = (value, emit)
                 if self._timer is None:
@@ -36,9 +37,17 @@ class RateGate:
     def _flush(self) -> None:
         with self._lock:
             self._timer = None
-            p, self._pending = self._pending, None
-            if p:
-                self._last = time.monotonic()
+            p = self._pending
+            if p is None:
+                return
+            now = time.monotonic()
+            wait = self._interval - (now - self._last)
+            if wait > 0:  # an immediate emit moved the window since this timer was armed
+                self._timer = threading.Timer(wait, self._flush)
+                self._timer.daemon = True
+                self._timer.start()
+                return
+            self._pending, self._last = None, now
         if p:
             p[1](p[0])
 
