@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iso21423"
+version = "0.1.0"
+description = "ROS-free Python SDK for ISO 21423 (IMR / IMRFM) over MQTT"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["paho-mqtt>=1.6,<3", "jsonschema>=4.10"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-repeat"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+iso21423 = ["schema/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: needs a live MQTT broker",
+  "interop: needs the TypeScript SDK",
+]
+addopts = "-m 'not integration and not interop'"
