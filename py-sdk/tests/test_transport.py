@@ -73,3 +73,22 @@ def test_tls_empty_dict_enables_tls_on_mqtt_scheme():
 
 def test_tls_none_leaves_tls_off_on_mqtt_scheme():
     connect_with(tls=None).tls_set.assert_not_called()
+
+
+def test_inflight_pruned_and_not_tracked_while_disconnected():
+    t = make()
+    done = MagicMock(rc=mqtt.MQTT_ERR_SUCCESS, **{"is_published.return_value": True})
+    t._client.publish.return_value = done
+    t.publish("a", "x", 1, False)
+    pending = MagicMock(rc=mqtt.MQTT_ERR_SUCCESS, **{"is_published.return_value": False})
+    t._client.publish.return_value = pending
+    t.publish("a", "x", 1, False)
+    assert t._inflight == [pending]  # the published one was pruned
+    t._client.publish.return_value = MagicMock(rc=mqtt.MQTT_ERR_NO_CONN)
+    for _ in range(100):
+        t.publish("a", "x", 1, False)
+    assert t._inflight == [pending]  # close() cannot flush while disconnected: not tracked
+
+
+def test_transport_has_docstring():
+    assert PahoTransport.__doc__ and "paho" in PahoTransport.__doc__

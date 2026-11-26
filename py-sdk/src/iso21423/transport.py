@@ -33,9 +33,9 @@ class Transport(Protocol):
 
 
 class PahoTransport:
-    _FLUSH_TIMEOUT = 5.0  # total bound for in-flight publishes + DISCONNECT in close()
-
     """Transport over paho-mqtt (1.6 or 2.x), MQTT 3.1.1, auto-reconnect via the network thread."""
+
+    _FLUSH_TIMEOUT = 5.0  # total bound for in-flight publishes + DISCONNECT in close()
 
     def __init__(self, url: str, *, username: str | None = None, password: str | None = None,
                  tls: dict | None = None, connect_timeout: float = 10.0):
@@ -55,7 +55,8 @@ class PahoTransport:
         self._refused: int | None = None
         self._closing = False
         self._disconnected = threading.Event()
-        self._inflight: list = []  # QoS>=1 MQTTMessageInfo, awaited in close()
+        self._inflight: list = []  # QoS>=1 MQTTMessageInfo sent while connected, awaited in close()
+        self._inflight_lock = threading.Lock()  # leaf lock: guards _inflight only
         self._cond = threading.Condition()
         self._acks: dict[int, list[int]] = {}
         self._subs: dict[str, int] = {}  # granted filters, replayed when the broker lost our session
@@ -128,8 +129,10 @@ class PahoTransport:
 
     def publish(self, topic, payload, qos, retain):
         info = self._live().publish(topic, payload, qos, retain)
-        if qos >= 1:
-            self._inflight = [i for i in self._inflight if not i.is_published()] + [info]
+        # Not connected (NO_CONN): close() skips the flush then, so there is nothing to track.
+        if qos >= 1 and info.rc == mqtt.MQTT_ERR_SUCCESS:
+            with self._inflight_lock:
+                self._inflight = [i for i in self._inflight if not i.is_published()] + [info]
         if info.rc == mqtt.MQTT_ERR_NO_CONN:
             # Disconnected: paho queues QoS>=1 (delivered on reconnect, so success); QoS0 is dropped.
             return
@@ -174,7 +177,9 @@ class PahoTransport:
         flush = c.is_connected() and threading.current_thread() is not getattr(c, "_thread", None)
         deadline = time.monotonic() + self._FLUSH_TIMEOUT
         if flush:
-            for info in list(self._inflight):
+            with self._inflight_lock:
+                pending = list(self._inflight)
+            for info in pending:
                 try:
                     info.wait_for_publish(max(0.0, deadline - time.monotonic()))
                 except (ValueError, RuntimeError):
