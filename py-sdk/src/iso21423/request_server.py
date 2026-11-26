@@ -47,6 +47,9 @@ class RequestServer:
         self._get_policy = get_policy
         self.owner_uuid = session.entity_uuid
         self._lock = threading.RLock()
+        # wait() fully releases the RLock, so wait_idle never blocks publishers
+        self._idle = threading.Condition(self._lock)
+        self._running = 0  # run threads started by _spawn and not yet returned
         # ponytail: in-memory only; a restart re-executes requests still retained on the broker
         self._seen: set = set()
         self._active: dict[str, _Active] = {}
@@ -69,6 +72,11 @@ class RequestServer:
     def serving_count(self) -> int:
         with self._lock:
             return sum(1 for e in self._active.values() if e.admitted)
+
+    def wait_idle(self, timeout: float) -> bool:
+        """True once no request is non-terminal and no run thread is alive; False on timeout."""
+        with self._idle:
+            return self._idle.wait_for(lambda: not self._active and not self._running, timeout)
 
     # --- StatusSink ---
 
@@ -94,6 +102,7 @@ class RequestServer:
                 s.clear_retained(request_topic(s.entity_type, s.entity_uuid, req.request_uuid))
                 if self._pending:
                     threading.Thread(target=self._drain, daemon=True).start()
+                self._idle.notify_all()
 
     # --- inbound ---
 
@@ -230,7 +239,18 @@ class RequestServer:
         self._executor.cancel(key)
 
     def _spawn(self, inc) -> None:
-        threading.Thread(target=self._run, args=(inc,), daemon=True).start()
+        with self._lock:
+            self._running += 1
+        try:
+            threading.Thread(target=self._run, args=(inc,), daemon=True).start()
+        except BaseException:
+            self._run_ended()
+            raise
+
+    def _run_ended(self) -> None:
+        with self._idle:
+            self._running -= 1
+            self._idle.notify_all()
 
     def _run(self, inc) -> None:
         try:
@@ -239,3 +259,5 @@ class RequestServer:
             _log.debug("request %s: %s", inc.request_uuid, e)
         except Exception:
             _log.exception("request %s: executor failed", inc.request_uuid)
+        finally:
+            self._run_ended()

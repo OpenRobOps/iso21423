@@ -94,6 +94,11 @@ class EntityHandle:
     def stop_serving(self) -> None:
         self._server.stop()
 
+    def wait_idle(self, timeout: float) -> bool:
+        """Blocks until no request is non-terminal and no run thread is alive, or `timeout` seconds
+        pass. True when idle. Call before unregister()/close() so terminal statuses get published."""
+        return self._server.wait_idle(timeout)
+
     def unregister(self) -> None:
         """Final OFFLINE status stays as the tombstone; every other retained topic is cleared."""
         self.publish_status(["OFFLINE"])

@@ -242,3 +242,48 @@ def test_retained_request_replayed_to_handlers_registered_before_start():
     h.on_request("dock", lambda a, ctx: ctx.succeeded())
     h.start_serving()
     wait_status(t, 1, "SUCCEEDED")
+
+
+def test_wait_idle_true_when_never_served():
+    t, c, h = setup(accepts=["move"])
+    start = time.monotonic()
+    assert h.wait_idle(5.0) is True
+    assert time.monotonic() - start < 0.5
+
+
+class SlowTerminalTransport(FakeTransport):
+    """Delays the terminal requestStatus publish, so a wait_idle that returns early is caught."""
+
+    def publish(self, topic, payload, qos, retain):
+        if topic.endswith("/status") and '"SUCCEEDED"' in payload and '"detailStatuses"' in payload:
+            time.sleep(0.3)
+        return super().publish(topic, payload, qos, retain)
+
+
+def test_wait_idle_waits_for_handler_and_terminal_publish():
+    t = SlowTerminalTransport()
+    c = Client.connect(transport=t, sequence_store=None)
+    h = c.register_self_entity(U, accepts=["move"])
+    gate = threading.Event()
+    h.on_request("move", lambda a, ctx: (gate.wait(5), ctx.succeeded())[1])
+    h.start_serving()
+    send(t, 1)
+    wait_status(t, 1, "EXECUTING")
+    assert h.wait_idle(0.2) is False
+    gate.set()
+    assert h.wait_idle(3.0) is True
+    # no polling: the terminal status must already be on the transport when wait_idle returns
+    assert statuses(t, 1)[-1]["status"] == "SUCCEEDED"
+
+
+def test_wait_idle_respects_timeout():
+    t, c, h = setup(accepts=["move"])
+    gate = threading.Event()
+    h.on_request("move", lambda a, ctx: (gate.wait(5), ctx.succeeded())[1])
+    h.start_serving()
+    send(t, 1)
+    wait_status(t, 1, "EXECUTING")
+    start = time.monotonic()
+    assert h.wait_idle(0.3) is False
+    assert 0.25 <= time.monotonic() - start < 1.0
+    gate.set()

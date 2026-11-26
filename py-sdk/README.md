@@ -58,6 +58,7 @@ robot.start_serving()
   not wait for the old handler to return (TS parity). Handlers must therefore honour `ctx.cancelled`
   promptly, or the old and new handlers briefly run side by side.
 - A `cancelRequest` that arrives before its target run is registered is **rejected**, not queued (TS parity).
+- `robot.wait_idle(timeout)` blocks until no request is non-terminal and no handler run is alive (True when idle, False on timeout); call it on shutdown before `unregister()` / `client.close()` so terminal statuses get published.
 
 ## Differences from the TS SDK
 
