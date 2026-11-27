@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,21 @@ version = "0.1.0"
 description = "ROS-free Python SDK for ISO 21423 (IMR / IMRFM) over MQTT"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["iso21423", "robotics", "amr", "fleet", "mqtt", "interoperability"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+  "Development Status :: 4 - Beta",
+]
 dependencies = ["paho-mqtt>=1.6,<3", "jsonschema>=4.10"]
+
+[project.urls]
+Homepage = "https://openrobops.org/docs/iso21423/overview"
+Source = "https://github.com/OpenRobOps/iso21423/tree/main/py-sdk"
+Issues = "https://github.com/OpenRobOps/iso21423/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "pytest-repeat"]

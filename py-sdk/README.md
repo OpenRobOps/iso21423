@@ -63,8 +63,8 @@ robot.start_serving()
 ## Differences from the TS SDK
 
 The library default policy is still `parallel()` (D-17). Two deliberate divergences, recorded in the
-[C++/shared decision register](../docs/cpp_design/docs/decision_register.md); the TS SDK adopts both in a
-separate change (marked `[Pending]` in the [Node register](../docs/nodejs_design/docs/decision_register.md)):
+[C++/shared decision register](https://github.com/OpenRobOps/iso21423/blob/main/docs/cpp_design/docs/decision_register.md); the TS SDK adopts both in a
+separate change (marked `[Pending]` in the [Node register](https://github.com/OpenRobOps/iso21423/blob/main/docs/nodejs_design/docs/decision_register.md)):
 
 1. **`policies.preempt()`** (C.2.2 strategy 2, **D-21**): a new request cancels every admitted request,
    then runs. New here; `queue_replace()` keeps the TS meaning (one active plus one queued slot).
